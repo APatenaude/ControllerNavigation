@@ -1,0 +1,11 @@
+# .NET build output
+bin/
+obj/
+.vs/
+*.user
+
+# Published exe (dev\Publish.ps1)
+dist/
+
+# Claude Code agent worktrees and local state
+.claude/

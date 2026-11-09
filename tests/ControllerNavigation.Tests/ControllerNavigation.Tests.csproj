@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The app's checks, one group per area (Harness.cs runs them; each *Tests class's Run() is
+       found by reflection): dotnet run -c Release (in this folder); -v prints every check, any other
+       argument runs only the groups whose name has it. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>ControllerNavigation.Tests</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <NoWarn>$(NoWarn);MSB3277</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ControllerNavigation\ControllerNavigation.csproj" />
+  </ItemGroup>
+</Project>

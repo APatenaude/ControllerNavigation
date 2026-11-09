@@ -1,0 +1,804 @@
+using System.Runtime.InteropServices;
+
+namespace ControllerNavigation;
+
+/// <summary>
+/// The enabled pads merged, one poll: SDL's buttons (one bit per PadControl up to Touchpad),
+/// SDL's axes (sticks -32768..32767 with Y down positive, triggers 0..32767), and the XInput
+/// slot of the pad that last pressed a button (-1: not an XInput pad), for power off.
+/// </summary>
+readonly record struct PadFrame(
+    uint Buttons,
+    short LX,
+    short LY,
+    short RX,
+    short RY,
+    short LT,
+    short RT,
+    int XInputSlot
+);
+
+/// <summary>What is in front, as the engine needs it: allowed (after the on-delay), and its app rule (null: this tool's own window).</summary>
+readonly record struct Front(bool Allowed, AppRule? Rule);
+
+/// <summary>
+/// Turns the pad into mouse, keyboard and system actions (SPEC "Base map", "Layer 2",
+/// "Configurability"). Fed every poll on the input thread; everything it does goes out through
+/// IOutput.
+/// <para>
+/// Who a press belongs to is decided once, when the control goes down, and kept until it is
+/// released: a layer if a layer button is held (the most recent one), else the base map if the
+/// app in front gets the mouse (Front.Allowed), else nobody. So a button held before the layer
+/// button keeps its base action, a button pressed under it stays a layer button even if the layer
+/// button goes first (HTPC's Start-chord rule), and a button already down when the controller turns
+/// on (the A that closed a game) does nothing until it is let go. Whatever the base map holds down
+/// is let go the moment the app in front stops getting the mouse or its map changes.
+/// </para>
+/// </summary>
+sealed class Engine
+{
+    /// <summary>PadControl's 23 controls, then the sticks used as arrows or WASD: left up, down, left, right, then the right stick's.</summary>
+    const int Controls = 31,
+        FirstStickKey = 23;
+
+    /// <summary>In apps without the mouse, a layer combo counts only when its button comes this long after the layer button.</summary>
+    const int GameChordDelayMs = 150;
+    const sbyte NoOwner = -2,
+        BaseOwner = -1,
+        KeyboardOwner = -3,
+        LayerButtonOwner = -4;
+
+    readonly IOutput output;
+    readonly IKeyboardSurface keyboard;
+    volatile Compiled compiled;
+    Compiled? active; // what the last poll used: a new one lets go of everything
+    readonly Slot[] slots = new Slot[Controls];
+    readonly List<int> heldLayers = new(); // layer indexes whose button is down, oldest first
+    LayerHold[] layerHolds = Array.Empty<LayerHold>();
+    uint previous; // control bits of the last poll (bit i: slots[i])
+    bool wasAllowed;
+    Map? lastMap;
+    Motion? lastMotion;
+
+    public Engine(IOutput output, IKeyboardSurface keyboard, Settings settings)
+    {
+        this.output = output;
+        this.keyboard = keyboard;
+        compiled = Compiled.From(settings);
+    }
+
+    /// <summary>New settings: used from the next poll on (anything held is let go then). Any thread.</summary>
+    public void Apply(Settings settings) => compiled = Compiled.From(settings);
+
+    /// <summary>Everything off (tray pause), layers included. Any thread.</summary>
+    public volatile bool Paused;
+
+    struct Slot
+    {
+        public sbyte Owner;
+        public Act? Act; // running: held down, or repeating
+        public Act? Pending; // has a long-press action: decided when released or held long enough
+        public long DownAt,
+            NextRepeat;
+    }
+
+    struct LayerHold
+    {
+        public long DownAt;
+        public bool Used,
+            HoldDone;
+        public Act? HoldAct; // the layer's own hold action, when it is a held one (released with the button)
+    }
+
+    /// <summary>One poll (input thread).</summary>
+    public void Update(in PadFrame f, long now, Front front)
+    {
+        var c = compiled;
+        if (c != active)
+        {
+            ReleaseAll();
+            active = c;
+            layerHolds = new LayerHold[c.Layers.Length];
+        }
+        var feel = c.Feel;
+        var paused = Paused;
+        var allowed = front.Allowed && !paused;
+        var map = front.Rule is { } rule && c.Apps.TryGetValue(rule, out var m) ? m : c.Base;
+
+        if (paused)
+        {
+            ReleaseAll();
+            var held = Bits(f, c, map, front.Allowed, previous);
+            ResumeOnPausePress(held & ~previous, held, c, map, front.Allowed);
+            previous = held;
+            SetMotion(null);
+            return;
+        }
+
+        if (keyboard.IsOpen && !front.Allowed)
+            keyboard.Close();
+        if (wasAllowed && !allowed)
+            ReleaseOwners(BaseOwner, KeyboardOwner);
+        else if (allowed && lastMap is not null && map != lastMap)
+            ReleaseOwners(BaseOwner);
+        if (!allowed)
+            ReleaseLayers(everywhereToo: false);
+        wasAllowed = allowed;
+        lastMap = map;
+
+        var keyboardOpen = allowed && keyboard.IsOpen;
+        var bits = Bits(f, c, map, allowed, previous, keyboardOpen);
+        var changed = bits ^ previous;
+
+        // Releases first, so a press in the same poll already sees the layer let go; then layer
+        // buttons before the rest, so Guide and Y pressed in the same poll are a layer-2 Y.
+        for (var i = 0; i < Controls; i++)
+            if ((changed & (1u << i)) != 0 && (bits & (1u << i)) == 0)
+                Released(i, now, c);
+        for (var pass = 0; pass < 2; pass++)
+        for (var i = 0; i < Controls; i++)
+            if ((changed & bits & (1u << i)) != 0 && IsLayerButton(i, c) == (pass == 0))
+                Pressed(i, now, c, map, allowed, keyboardOpen);
+
+        for (var i = 0; i < Controls; i++)
+            if ((bits & (1u << i)) != 0)
+                Held(i, now, feel);
+        for (var l = 0; l < c.Layers.Length; l++)
+            if (heldLayers.Contains(l))
+                LayerHeld(l, now, c, bits);
+        previous = bits;
+
+        SetMotion(allowed && !keyboardOpen ? MotionOf(f, map, feel) : null);
+    }
+
+    /// <summary>Lets go of everything held (input thread): pad gone, sleep, pause, new settings.</summary>
+    public void ReleaseAll()
+    {
+        ReleaseOwners(BaseOwner, KeyboardOwner);
+        ReleaseLayers(everywhereToo: true);
+        // What is left: buttons pressed under a layer whose button was let go first (Guide + X, Guide released).
+        for (var i = 0; i < Controls; i++)
+        {
+            if (slots[i].Act is { } act)
+                Stop(act);
+            if (slots[i].Owner != NoOwner)
+                slots[i] = new Slot { Owner = NoOwner };
+        }
+        SetMotion(null);
+    }
+
+    static bool IsLayerButton(int i, Compiled c) => i < FirstStickKey && c.LayerOf[i] >= 0;
+
+    /// <summary>Paused, a press bound to Pause still resumes: under a held layer button, else in the base map of an app that gets the mouse.</summary>
+    void ResumeOnPausePress(uint pressed, uint held, Compiled c, Map map, bool allowed)
+    {
+        for (var i = 0; i < FirstStickKey; i++)
+        {
+            if ((pressed & (1u << i)) == 0 || IsLayerButton(i, c))
+                continue;
+            var layer = -1;
+            for (var l = 0; l < c.Layers.Length; l++)
+                if (
+                    c.Layers[l].Button >= 0
+                    && (held & (1u << c.Layers[l].Button)) != 0
+                    && (allowed || c.Layers[l].Everywhere)
+                )
+                    layer = l;
+            var act =
+                layer >= 0 ? c.Layers[layer].Buttons[i]
+                : allowed ? map.Buttons[i]
+                : null;
+            if (act?.Action != ActionKind.Pause)
+                continue;
+            output.System(ActionKind.Pause, null);
+            return;
+        }
+    }
+
+    void Pressed(int i, long now, Compiled c, Map map, bool allowed, bool keyboardOpen)
+    {
+        ref var s = ref slots[i];
+        s = new Slot { Owner = NoOwner, DownAt = now };
+        var layer = i < FirstStickKey ? c.LayerOf[i] : -1;
+        if (layer >= 0 && (allowed || c.Layers[layer].Everywhere))
+        {
+            s.Owner = LayerButtonOwner;
+            heldLayers.Remove(layer);
+            heldLayers.Add(layer);
+            layerHolds[layer] = new LayerHold { DownAt = now };
+            return;
+        }
+        if (heldLayers.Count > 0)
+        {
+            var top = heldLayers[^1];
+            layerHolds[top].Used = true;
+            // In a game, a combo the game itself uses (Select + Start quits RetroBat) must not also
+            // mute the PC: only a button pressed well after the layer button counts there.
+            if (!allowed && now - layerHolds[top].DownAt < GameChordDelayMs)
+                return;
+            s.Owner = (sbyte)top;
+            Begin(ref s, i < FirstStickKey ? c.Layers[top].Buttons[i] : null, now, c.Feel);
+            return;
+        }
+        if (!allowed)
+            return;
+        if (keyboardOpen)
+        {
+            s.Owner = KeyboardOwner;
+            s.NextRepeat = now + c.Feel.RepeatDelayMs;
+            keyboard.Pad(KeyboardControl(i), repeat: false);
+            return;
+        }
+        s.Owner = BaseOwner;
+        Begin(ref s, map.Buttons[i], now, c.Feel);
+    }
+
+    void Begin(ref Slot s, Act? act, long now, Feel feel)
+    {
+        if (act is null)
+            return;
+        if (act.Hold is not null)
+        {
+            s.Pending = act;
+            return;
+        }
+        Start(act);
+        s.Act = act;
+        s.NextRepeat = now + feel.RepeatDelayMs;
+    }
+
+    void Held(int i, long now, Feel feel)
+    {
+        ref var s = ref slots[i];
+        if (s.Owner == KeyboardOwner)
+        {
+            // Held directions move on, held backspace (West) and cursor (LB/RB) go on deleting and moving.
+            if (
+                (
+                    IsDirection(i)
+                    || (PadControl)i is PadControl.West or PadControl.LB or PadControl.RB
+                )
+                && now >= s.NextRepeat
+            )
+            {
+                s.NextRepeat = now + feel.RepeatEveryMs;
+                keyboard.Pad(KeyboardControl(i), repeat: true);
+            }
+            return;
+        }
+        if (s.Pending is { } pending && now - s.DownAt >= feel.LongPressMs)
+        {
+            s.Pending = null;
+            Start(pending.Hold!);
+            s.Act = pending.Hold;
+            s.NextRepeat = now + feel.RepeatDelayMs;
+        }
+        if (s.Act is { Repeat: true } act && now >= s.NextRepeat)
+        {
+            s.NextRepeat = now + feel.RepeatEveryMs;
+            Repeat(act);
+        }
+    }
+
+    void Released(int i, long now, Compiled c)
+    {
+        ref var s = ref slots[i];
+        if (s.Owner == LayerButtonOwner)
+        {
+            var layer = c.LayerOf[i];
+            if (layer >= 0 && heldLayers.Remove(layer))
+                LayerReleased(layer, now, c);
+        }
+        else if (s.Pending is { } tap)
+        {
+            Start(tap);
+            Stop(tap);
+        } // let go before the long press: the short action
+        else if (s.Act is { } act)
+            Stop(act);
+        s = new Slot { Owner = NoOwner };
+    }
+
+    void LayerHeld(int l, long now, Compiled c, uint bits)
+    {
+        ref var h = ref layerHolds[l];
+        var layer = c.Layers[l];
+        // Any other control down, even one held since before (a throttle on RT): no tap, no hold (power off).
+        if ((bits & ~(1u << layer.Button)) != 0)
+            h.Used = true;
+        if (h.Used || h.HoldDone || layer.Hold is null || now - h.DownAt < layer.HoldMs)
+            return;
+        h.HoldDone = true;
+        Start(layer.Hold);
+        if (ActionKind.IsHeld(layer.Hold.Action))
+            h.HoldAct = layer.Hold;
+    }
+
+    void LayerReleased(int l, long now, Compiled c)
+    {
+        ref var h = ref layerHolds[l];
+        var layer = c.Layers[l];
+        if (h.HoldAct is { } held)
+            Stop(held);
+        // The tap is the button's own job, so it runs only where the base map does: Start pressed
+        // in a game pauses the game, never the music too. On the on-screen keyboard it is the
+        // keyboard's (Start there is Enter and close).
+        else if (wasAllowed && !h.Used && !h.HoldDone && now - h.DownAt < c.Feel.LongPressMs)
+        {
+            if (keyboard.IsOpen)
+                keyboard.Pad((PadControl)layer.Button, repeat: false);
+            else if (layer.Tap is { } tap)
+            {
+                Start(tap);
+                Stop(tap);
+            }
+        }
+        h = default;
+    }
+
+    /// <summary>Lets go of the controls these owners hold; they stay ignored until released.</summary>
+    void ReleaseOwners(params sbyte[] owners)
+    {
+        for (var i = 0; i < Controls; i++)
+        {
+            ref var s = ref slots[i];
+            if (!owners.Contains(s.Owner))
+                continue;
+            if (s.Act is { } act)
+                Stop(act);
+            s = new Slot { Owner = NoOwner };
+        }
+    }
+
+    /// <summary>Layers limited to apps that get the mouse go with them (everywhereToo false keeps the Everywhere ones).</summary>
+    void ReleaseLayers(bool everywhereToo)
+    {
+        var c = active;
+        if (c is null)
+            return;
+        foreach (var l in heldLayers.ToList())
+        {
+            if (!everywhereToo && c.Layers[l].Everywhere)
+                continue;
+            heldLayers.Remove(l);
+            if (layerHolds[l].HoldAct is { } held)
+                Stop(held);
+            layerHolds[l] = default;
+            for (var i = 0; i < Controls; i++)
+            {
+                ref var s = ref slots[i];
+                if (s.Owner != l && !(s.Owner == LayerButtonOwner && c.LayerOf[i] == l))
+                    continue;
+                if (s.Act is { } act)
+                    Stop(act);
+                s = new Slot { Owner = NoOwner };
+            }
+        }
+    }
+
+    void Start(Act act)
+    {
+        switch (act.Action)
+        {
+            case ActionKind.Key:
+                output.KeysDown(act.Keys!);
+                break;
+            case ActionKind.MouseLeft
+            or ActionKind.MouseRight
+            or ActionKind.MouseMiddle
+            or ActionKind.MouseBack
+            or ActionKind.MouseForward:
+                output.Mouse(act.Mouse, true);
+                break;
+            case ActionKind.ScrollUp:
+                output.Wheel(120, false);
+                break;
+            case ActionKind.ScrollDown:
+                output.Wheel(-120, false);
+                break;
+            case ActionKind.ScrollRight:
+                output.Wheel(120, true);
+                break;
+            case ActionKind.ScrollLeft:
+                output.Wheel(-120, true);
+                break;
+            case ActionKind.Precise or ActionKind.None:
+                break;
+            default:
+                output.System(act.Action, act.Arg);
+                break;
+        }
+    }
+
+    void Stop(Act act)
+    {
+        if (act.Action == ActionKind.Key)
+            output.KeysUp(act.Keys!);
+        else if (
+            act.Action
+            is ActionKind.MouseLeft
+                or ActionKind.MouseRight
+                or ActionKind.MouseMiddle
+                or ActionKind.MouseBack
+                or ActionKind.MouseForward
+        )
+            output.Mouse(act.Mouse, false);
+    }
+
+    /// <summary>A held key repeats its key-down (modifiers stay down), like a keyboard; the others run again.</summary>
+    void Repeat(Act act)
+    {
+        if (act.Action == ActionKind.Key)
+            output.KeysDown(new[] { act.Keys![^1] });
+        else if (!ActionKind.IsHeld(act.Action))
+            Start(act);
+    }
+
+    /// <summary>The controls down this poll: buttons, triggers (with some play so they do not flicker), sticks used as arrows or WASD.</summary>
+    static uint Bits(
+        in PadFrame f,
+        Compiled c,
+        Map map,
+        bool allowed,
+        uint was,
+        bool keyboardOpen = false
+    )
+    {
+        var bits = f.Buttons & ((1u << (int)PadControl.LT) - 1);
+        var feel = c.Feel;
+        var press = 32767 * feel.TriggerPercent / 100;
+        bool Trigger(short value, PadControl t) =>
+            value >= ((was & (1u << (int)t)) != 0 ? press / 2 : press);
+        if (Trigger(f.LT, PadControl.LT))
+            bits |= 1u << (int)PadControl.LT;
+        if (Trigger(f.RT, PadControl.RT))
+            bits |= 1u << (int)PadControl.RT;
+        if (!allowed)
+            return bits;
+        var tilt = 32767 * feel.StickArrowPercent / 100;
+        if (keyboardOpen || map.LeftStick is StickMode.Arrows or StickMode.Wasd)
+            bits |= StickKeys(f.LX, f.LY, tilt, (was >> FirstStickKey) & 0xF) << FirstStickKey;
+        if (!keyboardOpen && map.RightStick is StickMode.Arrows or StickMode.Wasd)
+            bits |=
+                StickKeys(f.RX, f.RY, tilt, (was >> (FirstStickKey + 4)) & 0xF)
+                << (FirstStickKey + 4);
+        return bits;
+    }
+
+    /// <summary>Up, down, left, right as 1, 2, 4, 8; a direction already down holds until the tilt drops to 3/4 of the threshold (no flicker).</summary>
+    static uint StickKeys(short x, short y, int tilt, uint was)
+    {
+        int Tilt(uint bit) => (was & bit) != 0 ? tilt * 3 / 4 : tilt;
+        uint bits = 0;
+        if (y < -Tilt(1))
+            bits |= 1; // up (SDL's Y grows downwards)
+        if (y > Tilt(2))
+            bits |= 2;
+        if (x < -Tilt(4))
+            bits |= 4;
+        if (x > Tilt(8))
+            bits |= 8;
+        return bits;
+    }
+
+    static bool IsDirection(int i) =>
+        i >= FirstStickKey
+        || (PadControl)i is PadControl.Up or PadControl.Down or PadControl.Left or PadControl.Right;
+
+    /// <summary>The keyboard navigates with the D-pad and the left stick alike.</summary>
+    static PadControl KeyboardControl(int i) =>
+        i < FirstStickKey
+            ? (PadControl)i
+            : ((i - FirstStickKey) % 4) switch
+            {
+                0 => PadControl.Up,
+                1 => PadControl.Down,
+                2 => PadControl.Left,
+                _ => PadControl.Right,
+            };
+
+    Motion? MotionOf(in PadFrame f, Map map, Feel feel)
+    {
+        var precise = false;
+        foreach (var s in slots)
+            if (s.Act?.Action == ActionKind.Precise)
+                precise = true;
+        bool Moves(string mode, short x, short y, int deadzone) =>
+            mode is StickMode.Pointer or StickMode.Scroll
+            && (double)x * x + (double)y * y > (double)deadzone * deadzone;
+        return
+            Moves(map.LeftStick, f.LX, f.LY, feel.LeftDeadzone)
+            || Moves(map.RightStick, f.RX, f.RY, feel.RightDeadzone)
+            ? new Motion(map.LeftStick, map.RightStick, f.LX, f.LY, f.RX, f.RY, precise, feel)
+            : null;
+    }
+
+    void SetMotion(Motion? m)
+    {
+        if (m == lastMotion)
+            return;
+        lastMotion = m;
+        output.Motion(m);
+    }
+
+    /// <summary>A binding made ready to run: its keys parsed, its mouse button picked.</summary>
+    sealed class Act
+    {
+        public required string Action { get; init; }
+        public string? Arg { get; init; }
+        public bool Repeat { get; init; }
+        public ushort[]? Keys { get; init; }
+        public Input.Button Mouse { get; init; }
+        public Act? Hold { get; init; }
+
+        public static Act? From(PadBinding? b, bool allowHold = true)
+        {
+            if (b is null || b.Action == ActionKind.None && b.Hold is null)
+                return null;
+            return new Act
+            {
+                Action = b.Action,
+                Arg = b.Arg,
+                Repeat = b.Repeat,
+                Keys = b.Action == ActionKind.Key ? KeyCombo.Parse(b.Arg) : null,
+                Mouse = b.Action switch
+                {
+                    ActionKind.MouseRight => Input.Button.Right,
+                    ActionKind.MouseMiddle => Input.Button.Middle,
+                    ActionKind.MouseBack => Input.Button.Back,
+                    ActionKind.MouseForward => Input.Button.Forward,
+                    _ => Input.Button.Left,
+                },
+                Hold = allowHold ? From(b.Hold, allowHold: false) : null,
+            };
+        }
+
+        public static Act KeyAct(string combo, bool repeat) =>
+            From(PadBinding.Of(ActionKind.Key, combo, repeat))!;
+    }
+
+    /// <summary>A map made ready: what each control does (stick keys included), what the sticks do.</summary>
+    sealed class Map
+    {
+        public required string LeftStick { get; init; }
+        public required string RightStick { get; init; }
+        public required Act?[] Buttons { get; init; }
+
+        static readonly Act[] Arrows =
+        {
+            Act.KeyAct("Up", true),
+            Act.KeyAct("Down", true),
+            Act.KeyAct("Left", true),
+            Act.KeyAct("Right", true),
+        };
+        static readonly Act[] Wasd =
+        {
+            Act.KeyAct("W", false),
+            Act.KeyAct("S", false),
+            Act.KeyAct("A", false),
+            Act.KeyAct("D", false),
+        };
+
+        public static Map From(string left, string right, Dictionary<string, PadBinding> buttons)
+        {
+            var acts = new Act?[Controls];
+            foreach (var (id, binding) in buttons)
+                if (Catalog.ControlOf(id) is { } control)
+                    acts[(int)control] = Act.From(binding);
+            for (var d = 0; d < 4; d++)
+            {
+                acts[FirstStickKey + d] =
+                    left == StickMode.Arrows ? Arrows[d]
+                    : left == StickMode.Wasd ? Wasd[d]
+                    : null;
+                acts[FirstStickKey + 4 + d] =
+                    right == StickMode.Arrows ? Arrows[d]
+                    : right == StickMode.Wasd ? Wasd[d]
+                    : null;
+            }
+            return new Map
+            {
+                LeftStick = left,
+                RightStick = right,
+                Buttons = acts,
+            };
+        }
+    }
+
+    /// <param name="Button">The PadControl index of the layer's button (Settings.Normalize keeps only known ones).</param>
+    sealed record CompiledLayer(
+        int Button,
+        bool Everywhere,
+        Act? Tap,
+        Act? Hold,
+        int HoldMs,
+        Act?[] Buttons
+    );
+
+    /// <summary>
+    /// Settings made ready for the input thread. Apps without overrides share the base map's
+    /// object, so moving between two of them is no map change: a drag carries on.
+    /// </summary>
+    sealed class Compiled
+    {
+        public required Feel Feel { get; init; }
+        public required Map Base { get; init; }
+        public required Dictionary<AppRule, Map> Apps { get; init; }
+        public required CompiledLayer[] Layers { get; init; }
+
+        /// <summary>Per PadControl: the index of the layer it is the button of, else -1 (the first layer wins a button used twice).</summary>
+        public required int[] LayerOf { get; init; }
+
+        public static Compiled From(Settings s)
+        {
+            var baseMap = Map.From(s.Base.LeftStick, s.Base.RightStick, s.Base.Buttons);
+            var apps = new Dictionary<AppRule, Map>(ReferenceEqualityComparer.Instance);
+            foreach (var app in s.Apps)
+            {
+                apps[app] =
+                    app.Buttons.Count == 0 && app.LeftStick is null && app.RightStick is null
+                        ? baseMap
+                        : Map.From(
+                            app.LeftStick ?? s.Base.LeftStick,
+                            app.RightStick ?? s.Base.RightStick,
+                            new Dictionary<string, PadBinding>(
+                                s.Base.Buttons.Concat(app.Buttons)
+                                    .GroupBy(p => p.Key)
+                                    .Select(g => g.Last())
+                            )
+                        );
+            }
+            var layerOf = Enumerable.Repeat(-1, FirstStickKey).ToArray();
+            var layers = new CompiledLayer[s.Layers.Count];
+            for (var l = 0; l < s.Layers.Count; l++)
+            {
+                var layer = s.Layers[l];
+                var acts = new Act?[FirstStickKey];
+                foreach (var (id, binding) in layer.Buttons)
+                    if (Catalog.ControlOf(id) is { } control)
+                        acts[(int)control] = Act.From(binding);
+                layers[l] = new CompiledLayer(
+                    Catalog.ControlOf(layer.Button) is { } own ? (int)own : 0,
+                    layer.Everywhere,
+                    Act.From(layer.Tap),
+                    Act.From(layer.Hold, allowHold: false),
+                    layer.HoldMs,
+                    acts
+                );
+                if (Catalog.ControlOf(layer.Button) is { } button && layerOf[(int)button] < 0)
+                    layerOf[(int)button] = l;
+            }
+            return new Compiled
+            {
+                Feel = s.Feel,
+                Base = baseMap,
+                Apps = apps,
+                Layers = layers,
+                LayerOf = layerOf,
+            };
+        }
+    }
+}
+
+/// <summary>
+/// Moves the pointer and scrolls once per displayed frame, from a thread paced by the compositor
+/// (DwmFlush), sized by the time since the last frame (lifted from HTPC's PadMapper: sent at the
+/// poll rate against a 60 Hz screen it beat, and scrolling looked uneven). Sleeps while the
+/// sticks rest.
+/// </summary>
+sealed class PointerFrames
+{
+    [DllImport("dwmapi.dll")]
+    static extern int DwmFlush();
+
+    const double PointerSpeed = 1.1; // screen heights per second at full tilt
+    const double ScrollSpeed = 2400; // wheel units per second at full tilt (20 notches)
+
+    volatile Motion? motion;
+    readonly ManualResetEventSlim moving = new(false);
+
+    // Sub-pixel and sub-unit remainders, one per stick: both sticks may move the pointer.
+    readonly (double X, double Y)[] remainders = new (double, double)[2];
+
+    public PointerFrames() =>
+        new Thread(Frames)
+        {
+            IsBackground = true,
+            Name = "Pointer frames",
+            Priority = ThreadPriority.AboveNormal,
+        }.Start();
+
+    /// <summary>The sticks as last polled (null: at rest); any thread.</summary>
+    public void Set(Motion? m)
+    {
+        motion = m;
+        if (m is not null)
+            moving.Set();
+    }
+
+    void Frames()
+    {
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        double last = -1;
+        while (true)
+        {
+            moving.Wait();
+            var m = motion;
+            if (m is null)
+            {
+                moving.Reset();
+                if (motion is not null)
+                    moving.Set(); // moved again meanwhile
+                remainders[0] = remainders[1] = default;
+                last = -1;
+                continue;
+            }
+            // Next frame. DwmFlush returns at once when nothing is being composed (display off):
+            // then a plain 60 Hz pace.
+            var before = clock.Elapsed.TotalMilliseconds;
+            if (DwmFlush() != 0 || clock.Elapsed.TotalMilliseconds - before < 2)
+                Thread.Sleep(16);
+            // Read again after the wait: a game that came in front meanwhile must not get one last move.
+            if ((m = motion) is null)
+                continue;
+            var now = clock.Elapsed.TotalMilliseconds;
+            var dt = last < 0 ? 1 / 60.0 : Math.Clamp(now - last, 0, 50) / 1000.0;
+            last = now;
+            try
+            {
+                Stick(0, m.Left, m.LX, m.LY, m.Feel.LeftDeadzone, dt, m);
+                Stick(1, m.Right, m.RX, m.RY, m.Feel.RightDeadzone, dt, m);
+            }
+            catch (Exception e)
+            {
+                Log.Error("Pointer frame", e);
+            }
+        }
+    }
+
+    void Stick(int stick, string mode, short x, short y, int deadzone, double dt, Motion m)
+    {
+        ref var rest = ref remainders[stick];
+        var (cx, cy) = Curve(x, y, deadzone, m.Feel.Curve);
+        if (cx == 0 && cy == 0 || mode is not (StickMode.Pointer or StickMode.Scroll))
+        {
+            rest = default;
+            return;
+        }
+        if (mode == StickMode.Pointer)
+        {
+            var factor = m.Feel.PointerSpeed * (m.Precise ? m.Feel.PreciseSpeed : 1);
+            var speed = PointerSpeed * Input.ScreenHeightAtPointer() * dt * factor;
+            rest.X += cx * speed;
+            rest.Y += cy * speed; // SDL's Y grows downwards, as the screen's
+            int dx = (int)rest.X,
+                dy = (int)rest.Y;
+            rest.X -= dx;
+            rest.Y -= dy;
+            Input.MoveBy(dx, dy);
+        }
+        else
+        {
+            var amount = ScrollSpeed * dt * m.Feel.ScrollSpeed;
+            rest.X += cx * amount;
+            rest.Y -= cy * amount; // stick up (negative Y) = wheel up (positive)
+            int h = (int)rest.X,
+                v = (int)rest.Y;
+            rest.X -= h;
+            rest.Y -= v;
+            Input.Wheel(v);
+            Input.Wheel(h, horizontal: true);
+        }
+    }
+
+    /// <summary>0..1 past the dead zone, raised to the curve's power: small tilts slow and exact, full tilt quick.</summary>
+    internal static (double X, double Y) Curve(short x, short y, int deadzone, double power)
+    {
+        var magnitude = Math.Sqrt((double)x * x + (double)y * y);
+        if (magnitude <= deadzone || magnitude == 0)
+            return (0, 0);
+        var m = Math.Min(1, (magnitude - deadzone) / (32767.0 - deadzone));
+        var scale = Math.Pow(m, power) / magnitude;
+        return (x * scale, y * scale);
+    }
+}

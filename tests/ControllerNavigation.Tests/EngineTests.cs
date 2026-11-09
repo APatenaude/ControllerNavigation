@@ -1,0 +1,684 @@
+namespace ControllerNavigation.Tests;
+
+static class EngineTests
+{
+    /// <summary>What the engine asked for, one line each: "down Enter", "up Enter", "mouse Left down", "wheel 120", "system volumeUp".</summary>
+    sealed class Recorder : IOutput
+    {
+        public readonly List<string> Calls = new();
+        public Motion? LastMotion;
+
+        public void KeysDown(ushort[] keys) => Calls.Add("down " + Names(keys));
+
+        public void KeysUp(ushort[] keys) => Calls.Add("up " + Names(keys));
+
+        public void Mouse(Input.Button button, bool down) =>
+            Calls.Add($"mouse {button} {(down ? "down" : "up")}");
+
+        public void Wheel(int amount, bool horizontal) =>
+            Calls.Add($"wheel{(horizontal ? " h" : "")} {amount}");
+
+        public void System(string action, string? arg) =>
+            Calls.Add("system " + action + (arg is null ? "" : " " + arg));
+
+        public void Motion(Motion? motion) => LastMotion = motion;
+
+        public List<string> Take()
+        {
+            var c = Calls.ToList();
+            Calls.Clear();
+            return c;
+        }
+
+        static string Names(ushort[] keys) =>
+            string.Join(
+                "+",
+                keys.Select(k => KeyCombo.Names.First(n => KeyCombo.Parse(n) is [var v] && v == k))
+            );
+    }
+
+    sealed class FakeKeyboard : IKeyboardSurface
+    {
+        public bool Open;
+        public readonly List<string> Presses = new();
+        public bool IsOpen => Open;
+
+        public void Toggle() => Open = !Open;
+
+        public void Close() => Open = false;
+
+        public void Pad(PadControl control, bool repeat) =>
+            Presses.Add(control + (repeat ? " repeat" : ""));
+    }
+
+    /// <summary>An engine and a clock: Poll sends a frame at the current time, then moves the clock on.</summary>
+    sealed class Rig
+    {
+        public readonly Recorder Out = new();
+        public readonly FakeKeyboard Keyboard = new();
+        public readonly Engine Engine;
+        public readonly Settings Settings;
+        public long Now = 1000;
+        public bool Allowed = true;
+        public AppRule? Rule;
+
+        public Rig(Settings? settings = null)
+        {
+            Settings = settings ?? GuideLayer();
+            Settings.Normalize();
+            Engine = new Engine(Out, Keyboard, Settings);
+        }
+
+        public void Poll(
+            uint buttons,
+            long advance = 8,
+            short lx = 0,
+            short ly = 0,
+            short lt = 0,
+            short rt = 0
+        )
+        {
+            Engine.Update(
+                new PadFrame(buttons, lx, ly, 0, 0, lt, rt, 1),
+                Now,
+                new Front(Allowed, Rule)
+            );
+            Now += advance;
+        }
+
+        /// <summary>Holds these buttons for ms milliseconds, polling every 8 ms.</summary>
+        public void Hold(uint buttons, int ms, short lt = 0, short rt = 0)
+        {
+            for (var t = 0; t < ms; t += 8)
+                Poll(buttons, lt: lt, rt: rt);
+        }
+    }
+
+    /// <summary>
+    /// The first defaults (layer 2 on Guide, held 2 s = power off, Menu = play/pause): most groups
+    /// check the engine's rules with it; "Engine: Start as layer 2" checks today's defaults.
+    /// </summary>
+    static Settings GuideLayer()
+    {
+        var s = new Settings();
+        var layer = s.Layers[0];
+        layer.Button = "guide";
+        layer.Tap = null;
+        layer.Hold = PadBinding.Of(ActionKind.PowerOff);
+        layer.Buttons["start"] = PadBinding.Of(ActionKind.PlayPause);
+        s.Base.Buttons["start"] = PadBinding.Of(ActionKind.PlayPause);
+        return s;
+    }
+
+    static uint B(params PadControl[] controls) =>
+        controls.Aggregate(0u, (bits, c) => bits | 1u << (int)c);
+
+    const short Full = 32767;
+
+    public static void Run()
+    {
+        T.Group(
+            "Engine: base map",
+            () =>
+            {
+                var r = new Rig();
+                r.Poll(0);
+                r.Poll(B(PadControl.South));
+                r.Poll(0);
+                T.Check(r.Out.Take() is ["down Enter", "up Enter"], "A is Enter, down then up");
+
+                r.Poll(B(PadControl.West));
+                r.Poll(B(PadControl.West));
+                r.Poll(0);
+                T.Check(
+                    r.Out.Take() is ["mouse Left down", "mouse Left up"],
+                    "X is a left click held as long as X (a drag)"
+                );
+
+                r.Poll(B(PadControl.LB));
+                r.Poll(0);
+                T.Check(
+                    r.Out.Take() is ["down Alt+Left", "up Alt+Left"],
+                    "LB is Alt+Left, held together"
+                );
+
+                r.Poll(B(PadControl.Start));
+                r.Poll(0);
+                T.Check(r.Out.Take() is ["system playPause"], "Menu is play/pause, once");
+            }
+        );
+
+        T.Group(
+            "Engine: repeat",
+            () =>
+            {
+                var r = new Rig();
+                r.Poll(0);
+                r.Hold(B(PadControl.Down), 350 + 60 * 3 + 4);
+                r.Poll(0);
+                var calls = r.Out.Take();
+                T.Check(
+                    calls.First() == "down Down" && calls.Last() == "up Down",
+                    "D-pad down: arrow down, then up"
+                );
+                T.Equal(
+                    4,
+                    calls.Count(c => c == "down Down"),
+                    "held: the key-down repeats after 350 ms, then every 60 ms"
+                );
+            }
+        );
+
+        T.Group(
+            "Engine: off where the app does not get the mouse, inherited buttons",
+            () =>
+            {
+                var r = new Rig { Allowed = false };
+                r.Poll(B(PadControl.South));
+                r.Poll(0);
+                T.Check(r.Out.Take().Count == 0, "a game in front: A does nothing");
+
+                r.Poll(B(PadControl.South)); // A held in the game...
+                r.Allowed = true;
+                r.Poll(B(PadControl.South)); // ...the desktop comes forward with A still down
+                r.Poll(0);
+                T.Check(
+                    r.Out.Take().Count == 0,
+                    "the A that closed the game does not press Enter on the desktop"
+                );
+                r.Poll(B(PadControl.South));
+                r.Poll(0);
+                T.Check(r.Out.Take() is ["down Enter", "up Enter"], "a new press does");
+
+                r.Poll(B(PadControl.West));
+                r.Allowed = false;
+                r.Poll(B(PadControl.West));
+                T.Check(
+                    r.Out.Take() is ["mouse Left down", "mouse Left up"],
+                    "a drag is let go the moment the app stops being allowed"
+                );
+                r.Poll(0);
+                T.Check(r.Out.Take().Count == 0, "and nothing more on release");
+            }
+        );
+
+        T.Group(
+            "Engine: layer 2 on Guide",
+            () =>
+            {
+                var r = new Rig { Allowed = false };
+                r.Hold(B(PadControl.Guide), 200); // in a game, a combo needs the layer button held first
+                r.Hold(B(PadControl.Guide, PadControl.RT), 100, rt: Full);
+                r.Poll(B(PadControl.Guide));
+                r.Poll(0);
+                T.Check(
+                    r.Out.Take() is ["system volumeUp"],
+                    "in a game, Guide + RT is volume up (layers work everywhere)"
+                );
+
+                r.Hold(B(PadControl.Guide), 200);
+                r.Hold(B(PadControl.Guide), 100, rt: Full);
+                r.Hold(B(PadControl.Guide), 400, rt: Full);
+                T.Equal(
+                    1 + 3,
+                    r.Out.Take().Count(c => c == "system volumeUp"),
+                    "held 500 ms, volume up repeats at 350, 410 and 470 ms"
+                );
+                r.Poll(0);
+
+                r.Allowed = true;
+                r.Poll(B(PadControl.RT), rt: Full); // precise pointer, base map
+                r.Poll(B(PadControl.RT, PadControl.Guide), rt: Full); // Guide pressed after RT
+                r.Poll(B(PadControl.Guide));
+                r.Poll(0);
+                T.Check(
+                    r.Out.Take().Count == 0,
+                    "RT held before Guide keeps its base action (precise, nothing sent)"
+                );
+
+                r.Poll(B(PadControl.Guide));
+                r.Poll(B(PadControl.Guide, PadControl.LT), lt: Full);
+                r.Poll(B(PadControl.LT), lt: Full); // Guide let go first
+                r.Poll(0);
+                T.Check(
+                    r.Out.Take() is ["system volumeDown"],
+                    "LT pressed under Guide stays a layer button when Guide goes first: no right click"
+                );
+
+                r.Poll(B(PadControl.Guide));
+                r.Poll(B(PadControl.Guide, PadControl.South));
+                r.Poll(0);
+                T.Check(
+                    r.Out.Take().Count == 0,
+                    "a button with no layer-2 action does nothing under Guide (no base Enter)"
+                );
+            }
+        );
+
+        T.Group(
+            "Engine: Start as layer 2 (today's defaults)",
+            () =>
+            {
+                var r = new Rig(new Settings());
+                r.Poll(0);
+                r.Poll(B(PadControl.Start));
+                r.Poll(0);
+                T.Check(
+                    r.Out.Take() is ["system playPause"],
+                    "Start alone in an app with the mouse: play/pause, on release"
+                );
+
+                r.Poll(B(PadControl.Start));
+                r.Hold(B(PadControl.Start), 100, rt: Full);
+                r.Poll(0);
+                T.Check(
+                    r.Out.Take() is ["system volumeUp"],
+                    "Start + RT: volume up, no play/pause"
+                );
+
+                r.Allowed = false;
+                r.Poll(B(PadControl.Start));
+                r.Poll(0);
+                T.Check(
+                    r.Out.Take().Count == 0,
+                    "Start alone in a game: nothing (the game pauses, not the music)"
+                );
+                r.Poll(B(PadControl.Start, PadControl.Back));
+                r.Poll(0);
+                r.Poll(B(PadControl.Start));
+                r.Poll(B(PadControl.Start, PadControl.Back));
+                r.Poll(0);
+                T.Check(
+                    r.Out.Take().Count == 0,
+                    "in a game, the game's own Select + Start (pressed together or quickly) does nothing here"
+                );
+                r.Hold(B(PadControl.Start), 200);
+                r.Hold(B(PadControl.Start, PadControl.Back), 50);
+                r.Poll(0);
+                T.Check(r.Out.Take() is ["system mute"], "Start held, then View, in a game: mute");
+
+                r.Allowed = true;
+                r.Poll(0);
+                r.Keyboard.Open = true;
+                r.Poll(B(PadControl.Start));
+                r.Poll(0);
+                T.Check(
+                    r.Out.Take().Count == 0 && r.Keyboard.Presses.LastOrDefault() == "Start",
+                    "on-screen keyboard open: Start goes to the keyboard (Enter and close), no play/pause"
+                );
+                r.Keyboard.Open = false;
+
+                r.Allowed = true;
+                r.Hold(B(PadControl.Guide), 2500);
+                r.Poll(0);
+                T.Check(r.Out.Take().Count == 0, "Guide is left to Windows: nothing, held or not");
+            }
+        );
+
+        T.Group(
+            "Engine: Guide alone",
+            () =>
+            {
+                var r = new Rig();
+                r.Poll(0);
+                r.Hold(B(PadControl.Guide), 2100);
+                r.Hold(B(PadControl.Guide), 500);
+                r.Poll(0);
+                T.Check(r.Out.Take() is ["system powerOff"], "held 2 s alone: power off, once");
+
+                r.Poll(B(PadControl.Guide));
+                r.Poll(0);
+                T.Check(r.Out.Take().Count == 0, "a tap does nothing (no tap action by default)");
+
+                r.Poll(B(PadControl.Guide));
+                r.Poll(B(PadControl.Guide, PadControl.North));
+                r.Hold(B(PadControl.Guide), 2100);
+                r.Poll(0);
+                T.Check(
+                    r.Out.Take() is ["system minimizeAll"],
+                    "Guide used with another button never powers off"
+                );
+            }
+        );
+
+        T.Group(
+            "Engine: long press",
+            () =>
+            {
+                var s = new Settings();
+                s.Base.Buttons["north"] = new PadBinding
+                {
+                    Action = ActionKind.Key,
+                    Arg = "Space",
+                    Hold = PadBinding.Of(ActionKind.Key, "Tab"),
+                };
+                var r = new Rig(s);
+                r.Poll(0);
+                r.Hold(B(PadControl.North), 200);
+                r.Poll(0);
+                T.Check(
+                    r.Out.Take() is ["down Space", "up Space"],
+                    "a short press runs the short action on release"
+                );
+                r.Hold(B(PadControl.North), 600);
+                T.Check(r.Out.Take() is ["down Tab"], "held 500 ms: the long-press action starts");
+                r.Poll(0);
+                T.Check(r.Out.Take() is ["up Tab"], "and ends with the button");
+            }
+        );
+
+        T.Group(
+            "Engine: app overrides and map changes",
+            () =>
+            {
+                var s = GuideLayer();
+                s.Apps[1].Buttons["start"] = PadBinding.Of(ActionKind.Key, "F11");
+                var r = new Rig(s) { Rule = s.Apps[1] };
+                r.Poll(0);
+                r.Poll(B(PadControl.Start));
+                r.Poll(0);
+                T.Check(r.Out.Take() is ["down F11", "up F11"], "Chrome's override: Menu is F11");
+
+                r.Rule = s.Apps[0];
+                r.Poll(B(PadControl.West));
+                r.Rule = s.Apps[2];
+                r.Poll(B(PadControl.West));
+                T.Check(
+                    r.Out.Take() is ["mouse Left down"],
+                    "a drag carries on between two apps on the base map"
+                );
+                r.Rule = s.Apps[1];
+                r.Poll(B(PadControl.West));
+                T.Check(
+                    r.Out.Take() is ["mouse Left up"],
+                    "moving to an app with its own map lets go"
+                );
+                r.Poll(0);
+            }
+        );
+
+        T.Group(
+            "Engine: on-screen keyboard",
+            () =>
+            {
+                var r = new Rig();
+                r.Poll(0);
+                r.Keyboard.Open = true;
+                r.Poll(B(PadControl.South));
+                r.Poll(0);
+                r.Hold(B(PadControl.Right), 350 + 60 + 4);
+                r.Poll(0);
+                r.Poll(0, ly: -Full);
+                r.Poll(0);
+                T.Check(
+                    r.Out.Calls.Count == 0,
+                    "nothing reaches the app while the keyboard is open"
+                );
+                T.Check(
+                    r.Keyboard.Presses.Take(3)
+                        .SequenceEqual(new[] { "South", "Right", "Right repeat" }),
+                    $"the keyboard gets the presses, directions repeat ({string.Join(", ", r.Keyboard.Presses)})"
+                );
+                T.Check(
+                    r.Keyboard.Presses.Last() == "Up",
+                    "the left stick moves on the keyboard too"
+                );
+                r.Allowed = false;
+                r.Poll(0);
+                T.Check(
+                    !r.Keyboard.Open,
+                    "a window that is not allowed comes forward: the keyboard closes"
+                );
+            }
+        );
+
+        T.Group(
+            "Engine: review fixes",
+            () =>
+            {
+                var r = new Rig();
+                r.Poll(0);
+                r.Poll(B(PadControl.Guide, PadControl.North));
+                r.Poll(0);
+                T.Check(
+                    r.Out.Take() is ["system minimizeAll"],
+                    "Guide and Y in the same poll: layer 2's Y, no base Space"
+                );
+
+                r.Hold(B(PadControl.RT), 50, rt: Full);
+                r.Hold(B(PadControl.RT, PadControl.Guide), 2100, rt: Full);
+                r.Poll(0);
+                T.Check(
+                    !r.Out.Take().Contains("system powerOff"),
+                    "a trigger held since before Guide: no power off after 2 s"
+                );
+
+                r.Poll(B(PadControl.Guide));
+                r.Poll(B(PadControl.Guide, PadControl.West));
+                r.Poll(B(PadControl.West)); // Guide let go first: X stays a layer button
+                r.Settings.Layers[0].Buttons["west"] = PadBinding.Of(ActionKind.MouseLeft);
+                r.Engine.Apply(SettingsStore.Copy(r.Settings));
+                r.Poll(B(PadControl.West));
+                r.Poll(0);
+                r.Out.Take();
+                r.Poll(B(PadControl.Guide));
+                r.Poll(B(PadControl.Guide, PadControl.West));
+                r.Poll(B(PadControl.West));
+                r.Engine.Paused = true;
+                r.Poll(B(PadControl.West));
+                T.Check(
+                    r.Out.Take() is ["mouse Left down", "mouse Left up"],
+                    "a click held under a released layer is let go at a pause"
+                );
+                r.Engine.Paused = false;
+                r.Poll(0);
+
+                var s = GuideLayer();
+                s.Layers[0].Buttons["back"] = PadBinding.Of(ActionKind.Pause);
+                var p = new Rig(s);
+                p.Poll(0);
+                p.Engine.Paused = true;
+                p.Poll(B(PadControl.Guide));
+                p.Poll(B(PadControl.Guide, PadControl.Back));
+                T.Check(
+                    p.Out.Take() is ["system pause"],
+                    "paused, Guide + View bound to pause still resumes"
+                );
+
+                var a = new Settings();
+                a.Base.LeftStick = StickMode.Arrows;
+                var k = new Rig(a);
+                k.Poll(0);
+                k.Poll(0, ly: -17000);
+                k.Poll(0, ly: -15000);
+                k.Poll(0, ly: -17000);
+                k.Poll(0, ly: -11000);
+                T.Check(
+                    k.Out.Take() is ["down Up", "up Up"],
+                    "a stick hovering at the arrow threshold does not flicker"
+                );
+
+                var kb = new Rig();
+                kb.Poll(0);
+                kb.Keyboard.Open = true;
+                kb.Hold(B(PadControl.West), 350 + 60 + 4);
+                kb.Hold(B(PadControl.South), 500);
+                kb.Poll(0);
+                T.Check(
+                    kb.Keyboard.Presses.SequenceEqual(new[] { "West", "West repeat", "South" }),
+                    $"keyboard: a held backspace repeats, a held A types once ({string.Join(", ", kb.Keyboard.Presses)})"
+                );
+            }
+        );
+
+        T.Group(
+            "Engine: pause and new settings",
+            () =>
+            {
+                var r = new Rig();
+                r.Poll(0);
+                r.Poll(B(PadControl.West));
+                r.Engine.Paused = true;
+                r.Poll(B(PadControl.West));
+                r.Poll(B(PadControl.Guide));
+                r.Hold(B(PadControl.Guide, PadControl.RT), 50, rt: Full);
+                T.Check(
+                    r.Out.Take() is ["mouse Left down", "mouse Left up"],
+                    "paused: what was held is let go, layers are off too"
+                );
+                r.Engine.Paused = false;
+                r.Poll(B(PadControl.Guide, PadControl.RT), rt: Full);
+                r.Poll(0);
+                T.Check(
+                    r.Out.Take().Count == 0,
+                    "buttons held across the pause do nothing until released"
+                );
+
+                r.Poll(B(PadControl.West));
+                r.Engine.Apply(GuideLayer());
+                r.Poll(B(PadControl.West));
+                T.Check(
+                    r.Out.Take() is ["mouse Left down", "mouse Left up"],
+                    "new settings let go of what is held"
+                );
+            }
+        );
+
+        T.Group(
+            "Engine: sticks",
+            () =>
+            {
+                var r = new Rig();
+                r.Poll(0, lx: 20000);
+                T.Check(
+                    r.Out.LastMotion is { Left: StickMode.Pointer, LX: 20000 },
+                    "the left stick moves the pointer"
+                );
+                r.Poll(0, lx: 3000);
+                T.Check(r.Out.LastMotion is null, "inside the dead zone: at rest");
+                r.Allowed = false;
+                r.Poll(0, lx: 20000);
+                T.Check(r.Out.LastMotion is null, "a game in front: no pointer");
+
+                var s = new Settings();
+                s.Base.LeftStick = StickMode.Arrows;
+                var a = new Rig(s);
+                a.Poll(0);
+                a.Poll(0, ly: -Full);
+                a.Poll(0);
+                T.Check(
+                    a.Out.Take() is ["down Up", "up Up"],
+                    "a stick set to arrows: up is the up arrow"
+                );
+                T.Check(a.Out.LastMotion is null, "and moves no pointer");
+
+                var (x, y) = PointerFrames.Curve(32767, 0, 8000, 2);
+                T.Check(Math.Abs(x - 1) < 1e-9 && y == 0, "full tilt is 1");
+                T.Check(
+                    PointerFrames.Curve(8000, 0, 8000, 2) == (0, 0),
+                    "the dead zone's edge is 0"
+                );
+                var half = PointerFrames.Curve((short)(8000 + (32767 - 8000) / 2), 0, 8000, 2).X;
+                T.Check(
+                    Math.Abs(half - 0.25) < 0.01,
+                    $"half way past the dead zone, squared: a quarter ({half:0.000})"
+                );
+            }
+        );
+
+        T.Group(
+            "Engine: triggers",
+            () =>
+            {
+                var r = new Rig();
+                r.Poll(0);
+                r.Poll(0, lt: 12000);
+                T.Check(r.Out.Take().Count == 0, "LT under 40 %: not pressed");
+                r.Poll(0, lt: 14000);
+                r.Poll(0, lt: 8000);
+                T.Check(
+                    r.Out.Take() is ["mouse Right down"],
+                    "past 40 % pressed, and still down at 25 % (some play)"
+                );
+                r.Poll(0, lt: 5000);
+                T.Check(r.Out.Take() is ["mouse Right up"], "under 20 %: released");
+            }
+        );
+
+        T.Group(
+            "Foreground: title rules",
+            () =>
+            {
+                T.Check(
+                    TitleRules.Matches(
+                        "Halo | Xbox Cloud Gaming on Xbox.com - Google Chrome",
+                        "* on Xbox.com - Google Chrome"
+                    ),
+                    "an end-anchored glob matches"
+                );
+                T.Check(
+                    !TitleRules.Matches(
+                        "Xbox.com - Google Chrome review - YouTube - Google Chrome",
+                        "* on Xbox.com - Google Chrome"
+                    ),
+                    "a page that only mentions it does not"
+                );
+                T.Check(
+                    TitleRules.Matches(
+                        "GEFORCE now - google chrome",
+                        "GeForce NOW - Google Chrome"
+                    ),
+                    "case is ignored"
+                );
+                T.Check(
+                    TitleRules.Matches("Tab 1 - Chrome", "Tab ? - Chrome")
+                        && !TitleRules.Matches("Tab 12 - Chrome", "Tab ? - Chrome"),
+                    "? is one character"
+                );
+                T.Check(
+                    TitleRules.Matches("a (b) [c]", "a (b) [c]"),
+                    "regex characters are plain text"
+                );
+            }
+        );
+
+        T.Group(
+            "Pads: virtual devices",
+            () =>
+            {
+                T.Equal(
+                    @"HID\VID_045E&PID_028E&IG_00\3&2a0e5a0f&0&0000",
+                    DeviceTree.InstanceIdOf(
+                        @"\\?\HID#VID_045E&PID_028E&IG_00#3&2a0e5a0f&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}"
+                    ),
+                    "a HID path as an instance id"
+                );
+                T.Check(
+                    DeviceTree.InstanceIdOf("XInput#0") is null
+                        && DeviceTree.InstanceIdOf(null) is null,
+                    "not a device path: unknown"
+                );
+                T.Check(
+                    DeviceTree.IsVirtualParent(@"ROOT\SYSTEM\0001") == true,
+                    "a bus right under the root (ViGEm) is virtual"
+                );
+                T.Check(
+                    DeviceTree.IsVirtualParent(@"SWD\MSRRAS\MS_NDISWANIP") == true,
+                    "a software device is virtual"
+                );
+                T.Check(
+                    DeviceTree.IsVirtualParent(@"PCI\VEN_8086&DEV_7AE0") == false,
+                    "the PCI bus is hardware"
+                );
+                T.Check(
+                    DeviceTree.IsVirtualParent(@"BTHLE\Dev_e417d8") == false,
+                    "Bluetooth is hardware"
+                );
+                T.Check(
+                    DeviceTree.IsVirtualParent(@"USB\ROOT_HUB30\4&1a2b") is null,
+                    "a USB hub: keep walking up"
+                );
+            }
+        );
+    }
+}

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Keyboard</title>
+    <link rel="stylesheet" href="keyboard.css" />
+  </head>
+  <body>
+    <!-- The on-screen keyboard, in a window of its own over the app: it never takes the focus, so what
+     it types goes to the app in front. Opened in a normal browser it runs on its own, with the
+     computer's keyboard standing in for the controller (arrows, Enter = A, Esc = B, Backspace = X). -->
+    <section id="kb" aria-label="On-screen keyboard">
+      <div class="kb-head">
+        <span class="kb-title">Keyboard</span>
+        <span class="kb-state" id="kb-state"></span>
+      </div>
+      <div class="kb-rows" id="kb-rows"></div>
+      <footer class="hints" id="kb-hints"></footer>
+    </section>
+    <script src="keyboard.js"></script>
+  </body>
+</html>

@@ -1,0 +1,197 @@
+/* On-screen keyboard: a 1920x440 band scaled to its window's width (440 of 1080 of the screen's
+   height, KeyboardForm). Always dark: it floats over whatever app is in front. */
+
+:root {
+  color-scheme: dark;
+  --panel: #16181d;
+  --key: #2a2e36;
+  --key-extra: #20242b;
+  --text: #f1f3f6;
+  --text-2: #aab1bf;
+  --muted: #7d8696;
+  --accent: #3b82f6;
+  --ring: #93c5fd;
+  --font:
+    "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", system-ui,
+    sans-serif;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--panel);
+  overflow: hidden;
+  user-select: none;
+  cursor: default;
+  font-family: var(--font);
+}
+
+#kb {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1920px;
+  height: 440px;
+  transform-origin: 0 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  color: var(--text);
+}
+
+.kb-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 36px;
+  padding: 4px 96px 0;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  font-size: 20px;
+}
+.kb-title {
+  color: var(--muted);
+}
+.kb-state {
+  color: var(--text-2);
+  font-weight: 600;
+}
+
+.kb-rows {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  margin-top: 4px;
+}
+.kb-row {
+  display: flex;
+  gap: 7px;
+}
+
+.kb-key {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 112px;
+  height: 50px;
+  border-radius: 10px;
+  box-sizing: border-box;
+  background: var(--key);
+  color: var(--text);
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1;
+  transition:
+    background 0.08s ease-out,
+    transform 0.08s ease-out;
+}
+.kb-key.w150 {
+  width: 150px;
+}
+.kb-key.w180 {
+  width: 180px;
+}
+.kb-key.w220 {
+  width: 220px;
+}
+.kb-key.w560 {
+  width: 560px;
+}
+.kb-key.w130 {
+  width: 130px;
+}
+.kb-key.w200 {
+  width: 200px;
+}
+.kb-key.w440 {
+  width: 440px;
+}
+.kb-key.extra {
+  width: 138px;
+  font-size: 21px;
+  color: var(--text-2);
+  background: var(--key-extra);
+}
+.kb-key.primary {
+  background: var(--accent);
+  color: #fff;
+}
+.kb-key.on {
+  background: #3a404b;
+  box-shadow: 0 0 0 4px var(--ring);
+}
+.kb-key.primary.on {
+  background: #5b9bff;
+}
+.kb-key.latched {
+  color: var(--ring);
+}
+.kb-key.locked,
+.kb-key.held {
+  background: #1c2a47;
+  color: var(--ring);
+}
+.kb-key.held {
+  box-shadow: inset 0 0 0 3px var(--accent);
+}
+.kb-key.held.on {
+  box-shadow:
+    inset 0 0 0 3px var(--accent),
+    0 0 0 4px var(--ring);
+}
+.kb-spacer {
+  width: 112px;
+  height: 50px;
+  flex-shrink: 0;
+}
+.kb-key.compact {
+  width: 138px;
+  font-size: 21px;
+}
+.kb-spacer.compact {
+  width: 138px;
+}
+.kb-key.hit {
+  transform: scale(0.94);
+}
+.kb-key svg {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+}
+
+.hints {
+  margin-top: auto;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 26px;
+  font-size: 19px;
+  color: var(--text-2);
+  flex-shrink: 0;
+}
+.hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+.hint .key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  height: 30px;
+  padding: 0 8px;
+  box-sizing: border-box;
+  border: 2px solid #3d4452;
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 700;
+}

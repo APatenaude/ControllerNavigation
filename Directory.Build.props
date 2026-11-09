@@ -1,0 +1,26 @@
+<Project>
+
+  <!--
+    The release's one version number: the exe carries it, the release's update.json repeats it and
+    installed copies compare it with the newest release's (Updater). Plain numeric SemVer
+    (major.minor.patch); the release workflow refuses a tag that differs.
+  -->
+  <PropertyGroup>
+    <Version>0.1.0</Version>
+    <!-- Windows x64 only. Named for every build, not just the release: SDL3's package carries
+         native files for every platform, and the iOS ones' paths pass Windows' 260-character limit. -->
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+  </PropertyGroup>
+
+  <!--
+    CN_BUILD_DIR set: bin and obj go there instead of next to the project, so several builds of the
+    same project can run side by side (parallel work in one checkout).
+  -->
+  <PropertyGroup Condition="'$(CN_BUILD_DIR)' != ''">
+    <BaseIntermediateOutputPath>$(CN_BUILD_DIR)\obj\$(MSBuildProjectName)\</BaseIntermediateOutputPath>
+    <BaseOutputPath>$(CN_BUILD_DIR)\bin\$(MSBuildProjectName)\</BaseOutputPath>
+    <!-- A normal build's own bin and obj next to the project are not sources. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);bin\**;obj\**</DefaultItemExcludes>
+  </PropertyGroup>
+
+</Project>

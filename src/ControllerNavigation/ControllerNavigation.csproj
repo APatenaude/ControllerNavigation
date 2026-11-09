@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!-- The Windows 10 SDK version brings the WinRT APIs (the system media session manager). -->
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- SDL3's bindings take pointers. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+    <AssemblyName>ControllerNavigation</AssemblyName>
+    <RootNamespace>ControllerNavigation</RootNamespace>
+    <!-- The WebView2 package also carries its WPF control, whose WindowsBase reference
+         conflicts with WinForms' copy. Harmless: the WPF control is not used. -->
+    <NoWarn>$(NoWarn);MSB3277</NoWarn>
+    <!-- The same exe runs elevated (install, update job, input helper): DOTNET_STARTUP_HOOKS in the
+         user's environment must not load code into it. -->
+    <StartupHookSupport>false</StartupHookSupport>
+  </PropertyGroup>
+
+  <!-- The release (dotnet publish): one self-contained exe (.NET, SDL3 and the WebView2 loader inside it). -->
+  <PropertyGroup Condition="'$(_IsPublishing)' == 'true'">
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The web pages (settings window, on-screen keyboard) live inside the exe, served by
+         WebUi from these resource names: ui/settings.html, ui/keyboard.js, ... -->
+    <EmbeddedResource Include="ui\**\*" LogicalName="ui/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ppy.SDL3-CS" Version="2026.1002.1" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4191.47" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="ControllerNavigation.Tests" />
+  </ItemGroup>
+
+</Project>
