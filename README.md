@@ -30,19 +30,21 @@ In apps that get the mouse:
 
 | Control | Action |
 |---|---|
-| Left stick | pointer |
+| Left stick | pointer (speeds up when held at the edge) |
 | Right stick | scroll |
 | A (bottom) | Enter |
 | B (right) | Esc |
 | X (left) | left click (hold to drag) |
 | Y (top) | Space |
 | D-pad | arrow keys |
-| LB / RB | back / forward |
+| LB / RB | volume down / up |
+| LB + RB | mute |
 | LT | right click |
-| RT | hold for a precise pointer |
+| RT | left click (hold to drag) |
+| LT + RT | middle click |
 | View | Esc |
 | Menu | tap: play / pause; hold: layer 2 |
-| L3 | middle click |
+| L3 | precise pointer on / off |
 | R3 | on-screen keyboard |
 | Guide | left to Windows (holding it opens Task View on Windows 11) |
 
@@ -50,9 +52,8 @@ Hold Menu (Start), everywhere:
 
 | Control | Action |
 |---|---|
-| LT / RT | volume down / up |
-| View | mute |
-| LB / RB | previous / next track |
+| LB / RB | back / forward (not in games) |
+| LT / RT | previous / next track |
 | D-pad left / right | move the window to the next screen (wraps round, stacked screens too) |
 | D-pad up / down | maximize (or restore) / minimize |
 | Y | minimize all |

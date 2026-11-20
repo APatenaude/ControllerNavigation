@@ -155,7 +155,7 @@ sealed partial class SettingsForm
             baseGrid.TakenHint = LayersButtonText();
             baseGrid.ShowMap(
                 edit.Base.Buttons,
-                Catalog.ControlIds,
+                Catalog.MapIds,
                 taken: id => edit.Layers.FirstOrDefault(l => l.Button == id)?.Name
             );
         }
@@ -703,13 +703,15 @@ sealed class ArgEditor : Panel
 /// <param name="Set">Stores the binding, or removes it (null).</param>
 /// <param name="TakenBy">A layer that owns this control: the row shows that instead of editors.</param>
 /// <param name="Remove">Shows a remove button that calls this.</param>
+/// <param name="NoHold">No long-press cells even in a grid that has them (a pair runs at once).</param>
 sealed record RowSpec(
     string Label,
     string? Tip,
     Func<PadBinding?> Get,
     Action<PadBinding?> Set,
     string? TakenBy,
-    Action? Remove
+    Action? Remove,
+    bool NoHold = false
 );
 
 /// <summary>
@@ -777,7 +779,8 @@ sealed class BindingGrid : Panel
                             map[id] = b;
                     },
                     taken?.Invoke(id),
-                    remove is null ? null : () => remove(id)
+                    remove is null ? null : () => remove(id),
+                    NoHold: Catalog.PairOf(id) is not null
                 ))
                 .ToList()
         );
@@ -1002,7 +1005,12 @@ sealed class PickerButton : Button
 /// <summary>One row of a BindingGrid. Edits go straight into the binding (created when the first one is made, removed when it does nothing).</summary>
 sealed class BindingRow : Panel
 {
-    static readonly string[] NoRepeat = { ActionKind.None, ActionKind.Precise };
+    static readonly string[] NoRepeat =
+    {
+        ActionKind.None,
+        ActionKind.Precise,
+        ActionKind.PreciseToggle,
+    };
     readonly RowSpec spec;
     readonly BindingGrid grid;
     readonly Label name = new() { AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft };
@@ -1052,7 +1060,7 @@ sealed class BindingRow : Panel
         Controls.Add(arg);
         if (grid.Repeat)
             Controls.Add(repeat);
-        if (grid.Hold)
+        if (grid.Hold && !spec.NoHold)
         {
             Controls.Add(holdAction);
             Controls.Add(holdArg);

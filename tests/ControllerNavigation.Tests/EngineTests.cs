@@ -61,6 +61,7 @@ static class EngineTests
         public long Now = 1000;
         public bool Allowed = true;
         public AppRule? Rule;
+        public uint Process;
 
         public Rig(Settings? settings = null)
         {
@@ -81,7 +82,7 @@ static class EngineTests
             Engine.Update(
                 new PadFrame(buttons, lx, ly, 0, 0, lt, rt, 1),
                 Now,
-                new Front(Allowed, Rule)
+                new Front(Allowed, Rule, Process)
             );
             Now += advance;
         }
@@ -95,8 +96,9 @@ static class EngineTests
     }
 
     /// <summary>
-    /// The first defaults (layer 2 on Guide, held 2 s = power off, Menu = play/pause): most groups
-    /// check the engine's rules with it; "Engine: Start as layer 2" checks today's defaults.
+    /// The first defaults (layer 2 on Guide, held 2 s = power off, Menu = play/pause, volume on
+    /// layer 2's triggers, no pairs): most groups check the engine's rules with it; "Engine: Start
+    /// as layer 2" and "Engine: one map with the HTPC" check today's defaults.
     /// </summary>
     static Settings GuideLayer()
     {
@@ -106,7 +108,16 @@ static class EngineTests
         layer.Tap = null;
         layer.Hold = PadBinding.Of(ActionKind.PowerOff);
         layer.Buttons["start"] = PadBinding.Of(ActionKind.PlayPause);
+        layer.Buttons["lt"] = PadBinding.Of(ActionKind.VolumeDown, repeat: true);
+        layer.Buttons["rt"] = PadBinding.Of(ActionKind.VolumeUp, repeat: true);
+        layer.Buttons["back"] = PadBinding.Of(ActionKind.Mute);
         s.Base.Buttons["start"] = PadBinding.Of(ActionKind.PlayPause);
+        s.Base.Buttons["lb"] = PadBinding.Of(ActionKind.Key, "Alt+Left");
+        s.Base.Buttons["rb"] = PadBinding.Of(ActionKind.Key, "Alt+Right");
+        s.Base.Buttons["rt"] = PadBinding.Of(ActionKind.Precise);
+        s.Base.Buttons["l3"] = PadBinding.Of(ActionKind.MouseMiddle);
+        s.Base.Buttons.Remove("lb+rb");
+        s.Base.Buttons.Remove("lt+rt");
         return s;
     }
 
@@ -218,11 +229,11 @@ static class EngineTests
 
                 r.Hold(B(PadControl.Guide), 200);
                 r.Hold(B(PadControl.Guide), 100, rt: Full);
-                r.Hold(B(PadControl.Guide), 400, rt: Full);
+                r.Hold(B(PadControl.Guide), 500, rt: Full);
                 T.Equal(
-                    1 + 3,
+                    1 + 2,
                     r.Out.Take().Count(c => c == "system volumeUp"),
-                    "held 500 ms, volume up repeats at 350, 410 and 470 ms"
+                    "held 600 ms, volume up repeats at 400 and 525 ms (slower than keys)"
                 );
                 r.Poll(0);
 
@@ -272,8 +283,15 @@ static class EngineTests
                 r.Hold(B(PadControl.Start), 100, rt: Full);
                 r.Poll(0);
                 T.Check(
-                    r.Out.Take() is ["system volumeUp"],
-                    "Start + RT: volume up, no play/pause"
+                    r.Out.Take() is ["system nextTrack"],
+                    "Start + RT: next track, no play/pause"
+                );
+                r.Poll(B(PadControl.Start));
+                r.Poll(B(PadControl.Start, PadControl.LB));
+                r.Poll(0);
+                T.Check(
+                    r.Out.Take() is ["down Alt+Left", "up Alt+Left"],
+                    "Start + LB: back (Alt+Left)"
                 );
 
                 r.Allowed = false;
@@ -283,19 +301,29 @@ static class EngineTests
                     r.Out.Take().Count == 0,
                     "Start alone in a game: nothing (the game pauses, not the music)"
                 );
-                r.Poll(B(PadControl.Start, PadControl.Back));
+                r.Poll(B(PadControl.Start), rt: Full);
                 r.Poll(0);
                 r.Poll(B(PadControl.Start));
-                r.Poll(B(PadControl.Start, PadControl.Back));
+                r.Poll(B(PadControl.Start), rt: Full);
                 r.Poll(0);
                 T.Check(
                     r.Out.Take().Count == 0,
-                    "in a game, the game's own Select + Start (pressed together or quickly) does nothing here"
+                    "in a game, the game's own Start + RT (pressed together or quickly) does nothing here"
                 );
                 r.Hold(B(PadControl.Start), 200);
-                r.Hold(B(PadControl.Start, PadControl.Back), 50);
+                r.Hold(B(PadControl.Start), 50, rt: Full);
                 r.Poll(0);
-                T.Check(r.Out.Take() is ["system mute"], "Start held, then View, in a game: mute");
+                T.Check(
+                    r.Out.Take() is ["system nextTrack"],
+                    "Start held, then RT, in a game: next track"
+                );
+                r.Hold(B(PadControl.Start), 200);
+                r.Hold(B(PadControl.Start, PadControl.LB), 50);
+                r.Poll(0);
+                T.Check(
+                    r.Out.Take().Count == 0,
+                    "in a game, Start + LB sends the game no Alt+Left (layers run system actions only there)"
+                );
 
                 r.Allowed = true;
                 r.Poll(0);
@@ -312,6 +340,193 @@ static class EngineTests
                 r.Hold(B(PadControl.Guide), 2500);
                 r.Poll(0);
                 T.Check(r.Out.Take().Count == 0, "Guide is left to Windows: nothing, held or not");
+            }
+        );
+
+        T.Group(
+            "Engine: one map with the HTPC (today's defaults)",
+            () =>
+            {
+                var r = new Rig(new Settings());
+                r.Poll(0);
+                r.Poll(0, rt: Full);
+                T.Check(r.Out.Take().Count == 0, "RT waits for LT a moment");
+                r.Hold(0, 100, rt: Full);
+                r.Poll(0);
+                T.Check(
+                    r.Out.Take() is ["mouse Left down", "mouse Left up"],
+                    "RT is a left click once the pair window passes, held as long as RT"
+                );
+                r.Poll(0, rt: Full);
+                r.Poll(0, rt: Full);
+                r.Poll(0);
+                T.Check(
+                    r.Out.Take() is ["mouse Left down", "mouse Left up"],
+                    "RT let go inside the window: a click"
+                );
+
+                r.Poll(0, lx: 20000, rt: Full);
+                T.Check(r.Out.LastMotion is null, "the pointer waits with the click");
+                r.Hold(0, 100, rt: Full);
+                r.Poll(0, lx: 20000, rt: Full);
+                T.Check(
+                    r.Out.LastMotion is { LX: 20000 },
+                    "and moves again once the click is down (a drag from where it was aimed)"
+                );
+                r.Poll(0);
+                r.Out.Take();
+
+                r.Poll(0, lt: Full);
+                r.Hold(0, 40, lt: Full, rt: Full);
+                T.Check(r.Out.Take() is ["mouse Middle down"], "LT + RT together: middle click");
+                r.Hold(0, 200, lt: Full);
+                r.Poll(0);
+                T.Check(
+                    r.Out.Take() is ["mouse Middle up"],
+                    "let go with the first trigger; the other then does nothing"
+                );
+
+                r.Poll(B(PadControl.LB));
+                T.Check(r.Out.Take() is ["system volumeDown"], "LB: volume down at once");
+                r.Hold(B(PadControl.LB), 540);
+                r.Poll(0);
+                T.Equal(
+                    2,
+                    r.Out.Take().Count(c => c == "system volumeDown"),
+                    "held: it steps again at 400 and 525 ms"
+                );
+
+                r.Poll(B(PadControl.LB));
+                r.Poll(B(PadControl.LB, PadControl.RB));
+                r.Hold(B(PadControl.LB, PadControl.RB), 800);
+                r.Hold(B(PadControl.LB), 300);
+                r.Poll(0);
+                T.Check(
+                    r.Out.Take() is ["system volumeDown", "system mute"],
+                    "LB, then RB with it: mute, once, and LB stops stepping"
+                );
+
+                r.Poll(B(PadControl.L3));
+                r.Poll(0);
+                r.Poll(0, lx: 20000);
+                T.Check(r.Out.LastMotion is { Precise: true }, "L3 turns precise on");
+                r.Poll(B(PadControl.L3));
+                r.Poll(0, lx: 20000);
+                T.Check(r.Out.LastMotion is { Precise: false }, "and off");
+                r.Poll(B(PadControl.L3));
+                r.Poll(0);
+                r.Process = 42;
+                r.Poll(0, lx: 20000);
+                T.Check(
+                    r.Out.LastMotion is { Precise: false },
+                    "another app in front: precise is off again"
+                );
+                r.Poll(0);
+                r.Out.Take();
+
+                r.Keyboard.Open = true;
+                r.Poll(B(PadControl.RB));
+                r.Poll(0);
+                r.Hold(0, 350 + 60 + 4, lt: Full);
+                r.Poll(0);
+                T.Check(
+                    r.Out.Take() is ["system volumeUp"]
+                        && r.Keyboard.Presses.SequenceEqual(new[] { "LT", "LT repeat" }),
+                    $"keyboard open: RB is still the volume, LT moves its cursor ({string.Join(", ", r.Keyboard.Presses)})"
+                );
+                r.Keyboard.Open = false;
+            }
+        );
+
+        T.Group(
+            "Engine: pairs and who owns a press",
+            () =>
+            {
+                var s = new Settings();
+                s.Apps[1].Buttons["lt"] = PadBinding.Of(ActionKind.Key, "F5");
+                var r = new Rig(s) { Rule = s.Apps[1] };
+                r.Poll(0);
+                r.Poll(0, lt: Full);
+                T.Check(
+                    r.Out.Take() is ["down F5"],
+                    "an app that gives LT its own job has no LT + RT: no wait"
+                );
+                r.Poll(0);
+                r.Out.Take();
+
+                var g = new Rig(new Settings()) { Allowed = false };
+                g.Poll(0, lt: Full);
+                g.Allowed = true;
+                g.Poll(0, lt: Full);
+                g.Hold(0, 100, lt: Full, rt: Full);
+                g.Poll(0);
+                T.Check(
+                    g.Out.Take() is ["mouse Left down", "mouse Left up"],
+                    "LT held since a game: RT is only a left click, no middle click"
+                );
+
+                var l = new Rig(new Settings());
+                l.Poll(0);
+                l.Poll(B(PadControl.Start));
+                l.Poll(B(PadControl.Start), lt: Full);
+                l.Poll(0, lt: Full); // Start let go: LT stays the layer's
+                l.Hold(0, 100, lt: Full, rt: Full);
+                l.Poll(0);
+                T.Check(
+                    l.Out.Take() is ["system previousTrack", "mouse Left down", "mouse Left up"],
+                    "LT pressed under Start, RT after: previous track, then a left click"
+                );
+
+                l.Hold(0, 100, rt: Full);
+                l.Out.Take();
+                l.Poll(0, lt: Full, rt: Full);
+                T.Check(
+                    l.Out.Take() is ["mouse Right down"],
+                    "LT during an RT drag: a right click at once, no wait"
+                );
+                l.Poll(0);
+                l.Out.Take();
+
+                var h = new Settings();
+                h.Layers[0].Buttons["north"] = new PadBinding
+                {
+                    Action = ActionKind.Key,
+                    Arg = "F1",
+                    Hold = PadBinding.Of(ActionKind.MinimizeAll),
+                };
+                var game = new Rig(h) { Allowed = false };
+                game.Hold(B(PadControl.Start), 200);
+                game.Hold(B(PadControl.Start, PadControl.North), 100);
+                game.Poll(B(PadControl.Start));
+                game.Hold(B(PadControl.Start), 200);
+                game.Hold(B(PadControl.Start, PadControl.North), 600);
+                game.Poll(0);
+                T.Check(
+                    game.Out.Take() is ["system minimizeAll"],
+                    "in a game, a layer key with a system long press: the key never, the long press still"
+                );
+            }
+        );
+
+        T.Group(
+            "Engine: acceleration",
+            () =>
+            {
+                var b = new PointerFrames.EdgeBoost();
+                T.Equal(1.0, b.Factor(0.95, 0, 3), "at the edge: not at once");
+                T.Equal(1.0, b.Factor(0.95, 200, 3), "nor after 200 ms");
+                T.Check(
+                    Math.Abs(b.Factor(0.95, 450, 3) - 2) < 1e-9,
+                    "half way up the ramp after 450 ms"
+                );
+                T.Equal(3.0, b.Factor(0.87, 900, 3), "full after 700 ms, kept down to 85 %");
+                T.Equal(1.0, b.Factor(0.8, 910, 3), "off the edge: back to 1 at once");
+                T.Equal(1.0, b.Factor(0.88, 920, 3), "back over 85 % but under 90 %: still 1");
+                T.Equal(
+                    1.0,
+                    new PointerFrames.EdgeBoost().Factor(1, 5000, 1),
+                    "acceleration 1 is off"
+                );
             }
         );
 

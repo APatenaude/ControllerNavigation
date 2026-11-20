@@ -139,5 +139,77 @@ static class SettingsTests
                 );
             }
         );
+
+        T.Group(
+            "Settings: a version 1 file moves on",
+            () =>
+            {
+                var s = JsonSerializer.Deserialize<Settings>(
+                    """
+                    { "version": 1, "feel": { "volumeStep": 4 },
+                      "base": { "buttons": { "lb": { "action": "key", "arg": "Alt+Left" }, "rb": { "action": "key", "arg": "Alt+Right" },
+                        "lt": { "action": "mouseRight" }, "rt": { "action": "precise" }, "l3": { "action": "key", "arg": "F5" } } },
+                      "layers": [ { "name": "Layer 2", "button": "start", "buttons": {
+                        "rt": { "action": "volumeUp", "repeat": true }, "back": { "action": "mute" }, "lb": { "action": "previousTrack" } } } ] }
+                    """,
+                    SettingsStore.Json
+                )!;
+                var notes = s.Normalize();
+                T.Check(
+                    s.Version == Migrations.Current && notes.Any(n => n.Contains("version 1")),
+                    "moved to the current version, and logged"
+                );
+                T.Check(
+                    s.Base.Buttons["lb"] is { Action: ActionKind.VolumeDown, Repeat: true }
+                        && s.Base.Buttons["rt"].Action == ActionKind.MouseLeft,
+                    "untouched old defaults take the new ones (LB volume, RT left click)"
+                );
+                T.Check(
+                    s.Base.Buttons["l3"] is { Action: ActionKind.Key, Arg: "F5" },
+                    "a binding the owner changed stays"
+                );
+                T.Check(
+                    !s.Base.Buttons.ContainsKey("south"),
+                    "a default the owner removed stays removed"
+                );
+                T.Check(
+                    s.Base.Buttons["lb+rb"].Action == ActionKind.Mute
+                        && s.Base.Buttons["lt+rt"].Action == ActionKind.MouseMiddle,
+                    "the new pairs come in"
+                );
+                var layer = s.Layers[0].Buttons;
+                T.Check(
+                    layer["rt"].Action == ActionKind.NextTrack
+                        && !layer.ContainsKey("back")
+                        && layer["lb"] is { Action: ActionKind.Key, Arg: "Alt+Left" },
+                    "Start's layer: volume out, tracks on the triggers, back and forward in"
+                );
+                T.Equal(2, s.Feel.VolumeStep, "the old 4 % step becomes 2 %");
+
+                s.Base.Buttons["rt"] = PadBinding.Of(ActionKind.Precise);
+                T.Check(
+                    s.Normalize().Count == 0 && s.Base.Buttons["rt"].Action == ActionKind.Precise,
+                    "a current file is left alone"
+                );
+
+                var own = JsonSerializer.Deserialize<Settings>(
+                    """
+                    { "version": 1, "base": { "buttons": { "lb": { "action": "key", "arg": "PageUp" }, "rb": { "action": "key", "arg": "Alt+Right" },
+                      "lt": { "action": "mouseRight" }, "rt": { "action": "precise" } } },
+                      "layers": [ { "button": "guide", "buttons": { "rt": { "action": "volumeUp", "repeat": true } } } ] }
+                    """,
+                    SettingsStore.Json
+                )!;
+                own.Normalize();
+                T.Check(
+                    !own.Base.Buttons.ContainsKey("lb+rb") && own.Base.Buttons.ContainsKey("lt+rt"),
+                    "LB rebound by the owner: no LB + RB pair (LT + RT still comes)"
+                );
+                T.Check(
+                    own.Layers[0].Buttons["rt"].Action == ActionKind.NextTrack,
+                    "an older layer 2 on Guide moves on too"
+                );
+            }
+        );
     }
 }

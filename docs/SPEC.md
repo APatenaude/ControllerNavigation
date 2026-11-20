@@ -120,26 +120,46 @@ Games keep using the pad while this tool reads it, so the tool must not change t
 
 ## Base map (apps that get the mouse)
 
-HTPC's Mouse preset, with Menu (Start) as the layer-2 button. Guide is left to Windows: on the
-owner's Windows 11, holding it opens Task View, and there is no setting to turn that off (9 Nov 2026).
+The same map as HTPC's Mouse preset (the owner, 20 Nov 2026: "exactly the same in both projects",
+except that HTPC moves windows in desktop mode only and keeps Guide as its Home), with Menu (Start)
+as the layer-2 button. Guide is left to Windows: on the owner's Windows 11, holding it opens Task
+View, and there is no setting to turn that off (9 Nov 2026).
 
 | Control | Action |
 |---|---|
-| L stick | pointer |
+| L stick | pointer, with acceleration |
 | R stick | scroll (vertical and horizontal) |
 | South (A) | Enter |
 | East (B) | Esc |
 | West (X) | left click (hold = drag) |
 | North (Y) | Space |
 | D-pad | arrow keys (repeat) |
-| LB / RB | back / forward (Alt+Left / Alt+Right) |
+| LB / RB | volume down / up, at once, repeating after 400 ms every 125 ms |
+| LB + RB | mute / unmute (the second bumper while the first is down; no step, no repeat after it) |
 | LT | right click |
-| RT | hold: precise pointer (x0.25) |
+| RT | left click (hold = drag) |
+| LT + RT | middle click |
 | View | Esc |
 | Menu | tap: play/pause; hold: layer 2 |
-| L3 | middle click |
+| L3 | precise pointer (x0.25) on / off; off again when another app comes in front |
 | R3 | on-screen keyboard (manual only, no pop-up on text fields) |
 | Guide | nothing (Windows' own) |
+
+- Pairs (LB + RB, LT + RT, bindable in the base map and app overrides, not in layers): a trigger
+  whose own action is a click or key waits up to 80 ms (Feel) for the other, and the pointer waits
+  with it, so a drag starts where it was aimed; let go sooner, it is a tap. A button whose action
+  is anything else (a volume step) runs at once, and the other one pressed while it is down runs
+  the pair instead of its own action. A pair forms only from two presses the base map owns: one
+  held since a game, or pressed under a layer, keeps its job. An app override that rebinds either
+  button drops the pair there.
+- Acceleration: once the stick has stayed past 90 % of its travel (until it falls under 85 %) for
+  200 ms, the pointer's speed ramps up to the Acceleration factor (default 3) over 500 ms, and is
+  back to normal the moment the stick leaves the edge; small moves stay slow without holding
+  anything. Not while precise. The owner, 20 Nov 2026: "too fast for small moves but too slow for
+  big moves".
+- Volume in apps that get the mouse only: in a game a held bumper is play, never the volume.
+- Settings files from before 20 Nov 2026 (version 1) have every binding still equal to the old
+  defaults moved to these; bindings the owner changed are kept (`Migrations` in `Settings.cs`).
 
 The on-screen keyboard closes as soon as a window that does not get the mouse comes forward, otherwise the pad
 would type into the game behind it. It also closes on pause and on session lock.
@@ -162,9 +182,8 @@ On-screen keyboard pages (HTPC's, extended on 9 Nov 2026 at the owner's request)
 
 | Control | Action |
 |---|---|
-| LT / RT | volume down / up (repeat) |
-| View | mute |
-| LB / RB | previous / next track |
+| LB / RB | back / forward (Alt+Left / Alt+Right; not in games) |
+| LT / RT | previous / next track |
 | D-pad left / right | move the window in front to the next screen that way (wraps round, as Win+Shift+arrow: stacked screens work) |
 | D-pad up | maximize (restore if already maximized) |
 | D-pad down | minimize |
@@ -190,7 +209,9 @@ On-screen keyboard pages (HTPC's, extended on 9 Nov 2026 at the owner's request)
   close). No hold action by default (the pads turn themselves off with their own Home hold).
 - In apps that do not get the mouse (games), a layer combo counts only when its button comes at
   least 150 ms after the layer button: a game's own combos (Select + Start quits RetroBat) must not
-  mute the PC.
+  skip the track. There, only system actions run (no keys, no clicks): Start + LB sends no
+  Alt+Left into a game.
+- Volume left layer 2 on 20 Nov 2026 (the owner: no Start for volume); it is on the bumpers.
 - Known limit: the tool does not hide the controller from games, so in a game the buttons of a
   layer-2 combo also reach the game: Menu opens its pause menu, and the game sees LT too. The owner
   moved layer 2 to Menu on 9 Nov 2026; this in-game side effect is flagged to them, not yet decided.
@@ -211,8 +232,9 @@ defaults.
   - Per binding: repeat on/off, and an optional long-press action (tap and hold do different things).
 - **Layers**: each layer is a held button plus its own map. Default: one layer on Guide; more can be
   added, each on its own button.
-- **Feel**: pointer, precise and scroll speeds; curve; deadzone per stick; trigger threshold; key
-  repeat delay and rate; long-press time; the ~300 ms on-delay; the power-off hold time.
+- **Feel**: pointer, precise and scroll speeds; acceleration; curve; deadzone per stick; trigger
+  threshold; key repeat delay and rate; long-press time; the two-button (pair) window; volume step
+  and repeat rate; the ~300 ms on-delay; the power-off hold time.
 - **Apps**: the always/never app rules, each Always app's overrides and title rules; the detection
   switches and game folders.
 - **Controllers**: on/off per pad, the mapping wizard, Switch-family driver choice.

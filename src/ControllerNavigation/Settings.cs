@@ -10,7 +10,8 @@ namespace ControllerNavigation;
 /// </summary>
 sealed class Settings
 {
-    public int Version { get; set; } = 1;
+    /// <summary>The defaults a file was written with: an older file has its untouched defaults moved on (Migrations.Apply).</summary>
+    public int Version { get; set; } = Migrations.Current;
     public Feel Feel { get; set; } = new();
 
     /// <summary>The map in apps that get the mouse.</summary>
@@ -44,10 +45,11 @@ sealed class Settings
     {
         var notes = new List<string>();
         Feel ??= new Feel();
-        Feel.Clamp();
         Base ??= Defaults.Base();
-        Base.Normalize("base map", notes);
         Layers ??= new();
+        Migrations.Apply(this, notes);
+        Feel.Clamp();
+        Base.Normalize("base map", notes);
         Apps ??= new();
         Pads ??= new();
         Mappings ??= new();
@@ -74,7 +76,12 @@ sealed class Settings
             }
             layer.Buttons ??= new();
             layer.HoldMs = Math.Clamp(layer.HoldMs, 100, 10_000);
-            ButtonLayout.NormalizeButtons(layer.Buttons, $"layer {layer.Name}", notes);
+            ButtonLayout.NormalizeButtons(
+                layer.Buttons,
+                $"layer {layer.Name}",
+                notes,
+                pairs: false
+            );
             if (layer.Tap is not null && !layer.Tap.Normalize($"layer {layer.Name} tap", notes))
                 layer.Tap = null;
             if (layer.Hold is not null && !layer.Hold.Normalize($"layer {layer.Name} hold", notes))
@@ -130,6 +137,9 @@ sealed class Feel
     /// <summary>Stick response past the dead zone: 1 linear, 2 squared (small tilts slow and exact).</summary>
     public double Curve { get; set; } = 2;
 
+    /// <summary>The pointer's top speed after the stick has been at the edge a moment, as a factor (1: no acceleration).</summary>
+    public double Acceleration { get; set; } = 3;
+
     /// <summary>Stick travel ignored around the centre, 0..32767.</summary>
     public int LeftDeadzone { get; set; } = 8000;
     public int RightDeadzone { get; set; } = 8000;
@@ -145,11 +155,17 @@ sealed class Feel
     /// <summary>A binding with a long-press action: held this long, the long-press action runs instead.</summary>
     public int LongPressMs { get; set; } = 500;
 
+    /// <summary>A click or key on one button of a bound pair (LT + RT) waits this long for the other.</summary>
+    public int PairWindowMs { get; set; } = 80;
+
     /// <summary>An allowed window must stay in front this long before the controller turns on (SPEC "Foreground tracking").</summary>
     public int OnDelayMs { get; set; } = 300;
 
     /// <summary>Volume change per step, in percent (rounded to Windows' 2 % per key press while ShowVolumeSlider is on).</summary>
-    public int VolumeStep { get; set; } = 4;
+    public int VolumeStep { get; set; } = 2;
+
+    /// <summary>A held volume button steps again this often (after 400 ms), slower than keys.</summary>
+    public int VolumeRepeatMs { get; set; } = 125;
 
     /// <summary>
     /// Volume and mute go through the volume keys, so Windows shows its volume slider (in steps of
@@ -164,6 +180,7 @@ sealed class Feel
         PreciseSpeed = Math.Clamp(PreciseSpeed, 0.01, 1);
         ScrollSpeed = Math.Clamp(ScrollSpeed, 0.05, 10);
         Curve = Math.Clamp(Curve, 1, 4);
+        Acceleration = Math.Clamp(Acceleration, 1, 5);
         LeftDeadzone = Math.Clamp(LeftDeadzone, 0, 30000);
         RightDeadzone = Math.Clamp(RightDeadzone, 0, 30000);
         TriggerPercent = Math.Clamp(TriggerPercent, 5, 95);
@@ -171,8 +188,10 @@ sealed class Feel
         RepeatDelayMs = Math.Clamp(RepeatDelayMs, 50, 5000);
         RepeatEveryMs = Math.Clamp(RepeatEveryMs, 15, 2000);
         LongPressMs = Math.Clamp(LongPressMs, 100, 5000);
+        PairWindowMs = Math.Clamp(PairWindowMs, 20, 300);
         OnDelayMs = Math.Clamp(OnDelayMs, 0, 5000);
         VolumeStep = Math.Clamp(VolumeStep, 1, 25);
+        VolumeRepeatMs = Math.Clamp(VolumeRepeatMs, 30, 2000);
     }
 }
 
@@ -199,21 +218,28 @@ sealed class ButtonLayout
         NormalizeButtons(Buttons, where, notes);
     }
 
+    /// <param name="pairs">Two-button combos ("lb+rb") allowed: base and app maps only, never a layer.</param>
     public static void NormalizeButtons(
         Dictionary<string, PadBinding> buttons,
         string where,
-        List<string> notes
+        List<string> notes,
+        bool pairs = true
     )
     {
         foreach (var (control, binding) in buttons.ToList())
         {
-            if (!Catalog.IsControl(control))
+            if (!Catalog.IsControl(control) && !(pairs && Catalog.PairOf(control) is not null))
             {
                 notes.Add($"{where}: control {control} unknown, dropped");
                 buttons.Remove(control);
             }
             else if (binding is null || !binding.Normalize($"{where} {control}", notes))
                 buttons.Remove(control);
+            else if (Catalog.PairOf(control) is not null && binding.Hold is not null)
+            {
+                notes.Add($"{where} {control}: a pair has no long press, dropped");
+                binding.Hold = null;
+            }
         }
     }
 }
@@ -239,6 +265,13 @@ sealed class PadBinding
             Arg = arg,
             Repeat = repeat,
         };
+
+    public bool SameAs(PadBinding? other) =>
+        other is not null
+        && Action == other.Action
+        && Arg == other.Arg
+        && Repeat == other.Repeat
+        && (Hold is null ? other.Hold is null : Hold.SameAs(other.Hold));
 
     /// <summary>False when it cannot run (the caller drops it); a broken long-press part is dropped alone.</summary>
     public bool Normalize(string where, List<string> notes)
@@ -376,6 +409,7 @@ static class ActionKind
         MouseBack = "mouseBack",
         MouseForward = "mouseForward",
         Precise = "precise",
+        PreciseToggle = "preciseToggle",
         ScrollUp = "scrollUp",
         ScrollDown = "scrollDown",
         ScrollLeft = "scrollLeft",
@@ -406,6 +440,7 @@ static class ActionKind
         MouseBack,
         MouseForward,
         Precise,
+        PreciseToggle,
         ScrollUp,
         ScrollDown,
         ScrollLeft,
@@ -468,6 +503,7 @@ static class ActionKind
         [MouseBack] = "Mouse back button",
         [MouseForward] = "Mouse forward button",
         [Precise] = "Hold: precise pointer",
+        [PreciseToggle] = "Toggle precise pointer",
         [ScrollUp] = "Scroll up",
         [ScrollDown] = "Scroll down",
         [ScrollLeft] = "Scroll left",
@@ -541,6 +577,25 @@ static class Catalog
 
     public static string IdOf(PadControl c) => ControlIds[(int)c];
 
+    /// <summary>Two-button combos a base or app map can bind, apart from each button's own action.</summary>
+    public static readonly (string Id, PadControl First, PadControl Second)[] Pairs =
+    {
+        ("lb+rb", PadControl.LB, PadControl.RB),
+        ("lt+rt", PadControl.LT, PadControl.RT),
+    };
+
+    /// <summary>What a base or app map can bind: the controls, then the pairs.</summary>
+    public static readonly string[] MapIds = ControlIds.Concat(Pairs.Select(p => p.Id)).ToArray();
+
+    /// <summary>The index in Pairs, or null.</summary>
+    public static int? PairOf(string? id)
+    {
+        for (var p = 0; p < Pairs.Length; p++)
+            if (string.Equals(Pairs[p].Id, id, StringComparison.OrdinalIgnoreCase))
+                return p;
+        return null;
+    }
+
     /// <summary>Xbox-style names for the log and the settings window (which also shows the pad's own labels).</summary>
     public static readonly Dictionary<string, string> Labels = new()
     {
@@ -567,6 +622,8 @@ static class Catalog
         ["touchpad"] = "Touchpad click",
         ["lt"] = "LT / L2",
         ["rt"] = "RT / R2",
+        ["lb+rb"] = "LB + RB together",
+        ["lt+rt"] = "LT + RT together",
     };
 }
 
@@ -733,12 +790,14 @@ static class Defaults
                 ["down"] = PadBinding.Of(ActionKind.Key, "Down", repeat: true),
                 ["left"] = PadBinding.Of(ActionKind.Key, "Left", repeat: true),
                 ["right"] = PadBinding.Of(ActionKind.Key, "Right", repeat: true),
-                ["lb"] = PadBinding.Of(ActionKind.Key, "Alt+Left"),
-                ["rb"] = PadBinding.Of(ActionKind.Key, "Alt+Right"),
+                ["lb"] = PadBinding.Of(ActionKind.VolumeDown, repeat: true),
+                ["rb"] = PadBinding.Of(ActionKind.VolumeUp, repeat: true),
+                ["lb+rb"] = PadBinding.Of(ActionKind.Mute),
                 ["lt"] = PadBinding.Of(ActionKind.MouseRight),
-                ["rt"] = PadBinding.Of(ActionKind.Precise),
+                ["rt"] = PadBinding.Of(ActionKind.MouseLeft),
+                ["lt+rt"] = PadBinding.Of(ActionKind.MouseMiddle),
                 ["back"] = PadBinding.Of(ActionKind.Key, "Esc"),
-                ["l3"] = PadBinding.Of(ActionKind.MouseMiddle),
+                ["l3"] = PadBinding.Of(ActionKind.PreciseToggle),
                 ["r3"] = PadBinding.Of(ActionKind.Keyboard),
             },
         };
@@ -757,11 +816,10 @@ static class Defaults
                 HoldMs = 2000,
                 Buttons = new()
                 {
-                    ["lt"] = PadBinding.Of(ActionKind.VolumeDown, repeat: true),
-                    ["rt"] = PadBinding.Of(ActionKind.VolumeUp, repeat: true),
-                    ["back"] = PadBinding.Of(ActionKind.Mute),
-                    ["lb"] = PadBinding.Of(ActionKind.PreviousTrack),
-                    ["rb"] = PadBinding.Of(ActionKind.NextTrack),
+                    ["lb"] = PadBinding.Of(ActionKind.Key, "Alt+Left"),
+                    ["rb"] = PadBinding.Of(ActionKind.Key, "Alt+Right"),
+                    ["lt"] = PadBinding.Of(ActionKind.PreviousTrack),
+                    ["rt"] = PadBinding.Of(ActionKind.NextTrack),
                     ["left"] = PadBinding.Of(ActionKind.WindowLeft),
                     ["right"] = PadBinding.Of(ActionKind.WindowRight),
                     ["up"] = PadBinding.Of(ActionKind.Maximize),
@@ -810,6 +868,97 @@ static class Defaults
                 Exes = new() { "steamwebhelper.exe" },
                 TitleOff = new() { "Steam Big Picture Mode*" },
             },
+        };
+}
+
+/// <summary>
+/// settings.json holds the whole map, so new defaults reach an existing file only through here:
+/// each binding (and Feel value) still equal to the old default takes the new one, and whatever
+/// the owner changed or removed stays as it is.
+/// </summary>
+static class Migrations
+{
+    public const int Current = 2;
+
+    public static void Apply(Settings s, List<string> notes)
+    {
+        if (s.Version >= Current)
+            return;
+        // Version 1 to 2 (owner, 20 Nov 2026): one map with the HTPC, volume on the bumpers.
+        var buttons = s.Base.Buttons ??= new();
+        var now = Defaults.Base().Buttons;
+        MoveOn(buttons, V1Base(), now);
+        // A pair only where both its buttons now do the new defaults: LB rebound to PageUp must
+        // not wait for RB, nor mute with it.
+        bool OnDefault(PadControl c) =>
+            buttons.GetValueOrDefault(Catalog.IdOf(c)) is { } b
+            && b.SameAs(now.GetValueOrDefault(Catalog.IdOf(c)));
+        foreach (var (id, first, second) in Catalog.Pairs)
+            if (!OnDefault(first) || !OnDefault(second))
+                buttons.Remove(id);
+        // Before 9 Nov 2026 the same layer was on Guide.
+        if (s.Layers.FirstOrDefault(l => l?.Button is "start" or "guide") is { } layer)
+            MoveOn(layer.Buttons ??= new(), V1Start(), Defaults.Layers()[0].Buttons);
+        if (s.Feel.VolumeStep == 4)
+            s.Feel.VolumeStep = new Feel().VolumeStep;
+        notes.Add($"Settings from version {s.Version}: untouched defaults moved to version {Current}");
+        s.Version = Current;
+    }
+
+    static void MoveOn(
+        Dictionary<string, PadBinding> current,
+        Dictionary<string, PadBinding> old,
+        Dictionary<string, PadBinding> now
+    )
+    {
+        foreach (var (id, was) in old)
+        {
+            if (!current.TryGetValue(id, out var binding) || !was.SameAs(binding))
+                continue;
+            if (now.TryGetValue(id, out var next))
+                current[id] = next;
+            else
+                current.Remove(id);
+        }
+        foreach (var (id, next) in now)
+            if (!old.ContainsKey(id))
+                current.TryAdd(id, next);
+    }
+
+    static Dictionary<string, PadBinding> V1Base() =>
+        new()
+        {
+            ["south"] = PadBinding.Of(ActionKind.Key, "Enter"),
+            ["east"] = PadBinding.Of(ActionKind.Key, "Esc"),
+            ["west"] = PadBinding.Of(ActionKind.MouseLeft),
+            ["north"] = PadBinding.Of(ActionKind.Key, "Space"),
+            ["up"] = PadBinding.Of(ActionKind.Key, "Up", repeat: true),
+            ["down"] = PadBinding.Of(ActionKind.Key, "Down", repeat: true),
+            ["left"] = PadBinding.Of(ActionKind.Key, "Left", repeat: true),
+            ["right"] = PadBinding.Of(ActionKind.Key, "Right", repeat: true),
+            ["lb"] = PadBinding.Of(ActionKind.Key, "Alt+Left"),
+            ["rb"] = PadBinding.Of(ActionKind.Key, "Alt+Right"),
+            ["lt"] = PadBinding.Of(ActionKind.MouseRight),
+            ["rt"] = PadBinding.Of(ActionKind.Precise),
+            ["back"] = PadBinding.Of(ActionKind.Key, "Esc"),
+            ["l3"] = PadBinding.Of(ActionKind.MouseMiddle),
+            ["r3"] = PadBinding.Of(ActionKind.Keyboard),
+        };
+
+    /// <summary>Layer 2's buttons in version 1, whichever button held it.</summary>
+    static Dictionary<string, PadBinding> V1Start() =>
+        new()
+        {
+            ["lt"] = PadBinding.Of(ActionKind.VolumeDown, repeat: true),
+            ["rt"] = PadBinding.Of(ActionKind.VolumeUp, repeat: true),
+            ["back"] = PadBinding.Of(ActionKind.Mute),
+            ["lb"] = PadBinding.Of(ActionKind.PreviousTrack),
+            ["rb"] = PadBinding.Of(ActionKind.NextTrack),
+            ["left"] = PadBinding.Of(ActionKind.WindowLeft),
+            ["right"] = PadBinding.Of(ActionKind.WindowRight),
+            ["up"] = PadBinding.Of(ActionKind.Maximize),
+            ["down"] = PadBinding.Of(ActionKind.Minimize),
+            ["north"] = PadBinding.Of(ActionKind.MinimizeAll),
         };
 }
 

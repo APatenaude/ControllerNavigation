@@ -384,7 +384,7 @@ sealed partial class SettingsForm
     {
         appMap.ShowMap(
             app.Buttons,
-            Catalog.ControlIds.Where(app.Buttons.ContainsKey).ToList(),
+            Catalog.MapIds.Where(app.Buttons.ContainsKey).ToList(),
             baseMap: edit.Base.Buttons,
             remove: id =>
                 BeginInvoke(() =>
@@ -398,7 +398,7 @@ sealed partial class SettingsForm
         loading = true;
         appMapAdd.Items.Clear();
         appMapAdd.Items.Add(new ComboItem("", "Add an override..."));
-        foreach (var id in Catalog.ControlIds)
+        foreach (var id in Catalog.MapIds)
             if (!app.Buttons.ContainsKey(id))
                 appMapAdd.Items.Add(new ComboItem(id, Catalog.Labels.GetValueOrDefault(id, id)));
         appMapAdd.SelectedIndex = 0;

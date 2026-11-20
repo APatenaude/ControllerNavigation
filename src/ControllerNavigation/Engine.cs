@@ -18,8 +18,8 @@ readonly record struct PadFrame(
     int XInputSlot
 );
 
-/// <summary>What is in front, as the engine needs it: allowed (after the on-delay), and its app rule (null: this tool's own window).</summary>
-readonly record struct Front(bool Allowed, AppRule? Rule);
+/// <summary>What is in front, as the engine needs it: allowed (after the on-delay), its app rule (null: this tool's own window), its process.</summary>
+readonly record struct Front(bool Allowed, AppRule? Rule, uint Process = 0);
 
 /// <summary>
 /// Turns the pad into mouse, keyboard and system actions (SPEC "Base map", "Layer 2",
@@ -34,6 +34,12 @@ readonly record struct Front(bool Allowed, AppRule? Rule);
 /// on (the A that closed a game) does nothing until it is let go. Whatever the base map holds down
 /// is let go the moment the app in front stops getting the mouse or its map changes.
 /// </para>
+/// <para>
+/// A pair (Catalog.Pairs) bound in the map runs when its second button goes down while the first
+/// is still open to it: waiting, for a first whose own action is a click or key (sent once the
+/// pair window passes, or as a tap if let go sooner), or simply held, for any other (a volume
+/// step, which then stops repeating). Both stay used up until each is released.
+/// </para>
 /// </summary>
 sealed class Engine
 {
@@ -43,6 +49,7 @@ sealed class Engine
 
     /// <summary>In apps without the mouse, a layer combo counts only when its button comes this long after the layer button.</summary>
     const int GameChordDelayMs = 150;
+    const int VolumeRepeatDelayMs = 400;
     const sbyte NoOwner = -2,
         BaseOwner = -1,
         KeyboardOwner = -3,
@@ -59,6 +66,8 @@ sealed class Engine
     bool wasAllowed;
     Map? lastMap;
     Motion? lastMotion;
+    bool preciseOn; // ActionKind.PreciseToggle, until pressed again or another app comes in front
+    uint lastProcess;
 
     public Engine(IOutput output, IKeyboardSurface keyboard, Settings settings)
     {
@@ -78,6 +87,9 @@ sealed class Engine
         public sbyte Owner;
         public Act? Act; // running: held down, or repeating
         public Act? Pending; // has a long-press action: decided when released or held long enough
+        public Act? Waiting; // a click or key held back for the pair window
+        public bool PairOpen, // the partner going down now makes the pair
+            Paired;
         public long DownAt,
             NextRepeat;
     }
@@ -104,6 +116,12 @@ sealed class Engine
         var paused = Paused;
         var allowed = front.Allowed && !paused;
         var map = front.Rule is { } rule && c.Apps.TryGetValue(rule, out var m) ? m : c.Base;
+        // 0: nothing in front for a moment (a window closing, a UAC prompt), not another app.
+        if (front.Process != 0 && front.Process != lastProcess)
+        {
+            lastProcess = front.Process;
+            preciseOn = false;
+        }
 
         if (paused)
         {
@@ -164,6 +182,7 @@ sealed class Engine
             if (slots[i].Owner != NoOwner)
                 slots[i] = new Slot { Owner = NoOwner };
         }
+        preciseOn = false;
         SetMotion(null);
     }
 
@@ -217,12 +236,14 @@ sealed class Engine
             if (!allowed && now - layerHolds[top].DownAt < GameChordDelayMs)
                 return;
             s.Owner = (sbyte)top;
-            Begin(ref s, i < FirstStickKey ? c.Layers[top].Buttons[i] : null, now, c.Feel);
+            var act = i < FirstStickKey ? c.Layers[top].Buttons[i] : null;
+            Begin(ref s, allowed || act is null ? act : SystemOnly(act), now, c.Feel);
             return;
         }
         if (!allowed)
             return;
-        if (keyboardOpen)
+        // The bumpers stay the volume over the keyboard.
+        if (keyboardOpen && (PadControl)i is not (PadControl.LB or PadControl.RB))
         {
             s.Owner = KeyboardOwner;
             s.NextRepeat = now + c.Feel.RepeatDelayMs;
@@ -230,7 +251,39 @@ sealed class Engine
             return;
         }
         s.Owner = BaseOwner;
-        Begin(ref s, map.Buttons[i], now, c.Feel);
+        var own = map.Buttons[i];
+        if (
+            PartnerOf(i) is (int pair, int partner)
+            && map.Pairs[pair] is { } both
+            && !IsLayerButton(partner, c)
+        )
+        {
+            ref var other = ref slots[partner];
+            if (other.Owner == BaseOwner && other.PairOpen)
+            {
+                if (other.Act is { } running)
+                    Stop(running);
+                other.Act = other.Waiting = other.Pending = null;
+                other.PairOpen = false;
+                other.Paired = s.Paired = true;
+                Start(both);
+                s.Act = both;
+                s.NextRepeat = now + Pace(both, c.Feel).Delay;
+                return;
+            }
+            s.PairOpen = true;
+            // A partner already down cannot come now: no reason to hold the click back.
+            if (
+                (previous & (1u << partner)) == 0
+                && own is { Hold: null }
+                && ActionKind.IsHeld(own.Action)
+            )
+            {
+                s.Waiting = own;
+                return;
+            }
+        }
+        Begin(ref s, own, now, c.Feel);
     }
 
     void Begin(ref Slot s, Act? act, long now, Feel feel)
@@ -244,7 +297,46 @@ sealed class Engine
         }
         Start(act);
         s.Act = act;
-        s.NextRepeat = now + feel.RepeatDelayMs;
+        s.NextRepeat = now + Pace(act, feel).Delay;
+    }
+
+    /// <summary>In a game a layer runs system actions only, each part on its own: Start + LB must not send Alt+Left to it.</summary>
+    static Act? SystemOnly(Act act)
+    {
+        var hold = act.Hold is { } h && ActionKind.IsSystem(h.Action) ? h : null;
+        var keep = ActionKind.IsSystem(act.Action);
+        if (keep && hold == act.Hold)
+            return act;
+        if (!keep && hold is null)
+            return null;
+        return new Act
+        {
+            Action = keep ? act.Action : ActionKind.None,
+            Arg = act.Arg,
+            Repeat = act.Repeat,
+            Keys = act.Keys,
+            Mouse = act.Mouse,
+            Hold = hold,
+        };
+    }
+
+    /// <summary>A held volume button steps slower than a held key repeats.</summary>
+    static (int Delay, int Every) Pace(Act act, Feel feel) =>
+        act.Action is ActionKind.VolumeUp or ActionKind.VolumeDown
+            ? (VolumeRepeatDelayMs, feel.VolumeRepeatMs)
+            : (feel.RepeatDelayMs, feel.RepeatEveryMs);
+
+    static (int Pair, int Partner)? PartnerOf(int i)
+    {
+        for (var p = 0; p < Catalog.Pairs.Length; p++)
+        {
+            var (_, first, second) = Catalog.Pairs[p];
+            if (i == (int)first)
+                return (p, (int)second);
+            if (i == (int)second)
+                return (p, (int)first);
+        }
+        return null;
     }
 
     void Held(int i, long now, Feel feel)
@@ -252,11 +344,11 @@ sealed class Engine
         ref var s = ref slots[i];
         if (s.Owner == KeyboardOwner)
         {
-            // Held directions move on, held backspace (West) and cursor (LB/RB) go on deleting and moving.
+            // Held directions move on, held backspace (West) and cursor (LT/RT) go on deleting and moving.
             if (
                 (
                     IsDirection(i)
-                    || (PadControl)i is PadControl.West or PadControl.LB or PadControl.RB
+                    || (PadControl)i is PadControl.West or PadControl.LT or PadControl.RT
                 )
                 && now >= s.NextRepeat
             )
@@ -266,16 +358,23 @@ sealed class Engine
             }
             return;
         }
+        if (s.Waiting is { } waiting && now - s.DownAt >= feel.PairWindowMs)
+        {
+            s.Waiting = null;
+            s.PairOpen = false;
+            Begin(ref s, waiting, now, feel);
+        }
         if (s.Pending is { } pending && now - s.DownAt >= feel.LongPressMs)
         {
             s.Pending = null;
+            s.PairOpen = false;
             Start(pending.Hold!);
             s.Act = pending.Hold;
-            s.NextRepeat = now + feel.RepeatDelayMs;
+            s.NextRepeat = now + Pace(pending.Hold!, feel).Delay;
         }
         if (s.Act is { Repeat: true } act && now >= s.NextRepeat)
         {
-            s.NextRepeat = now + feel.RepeatEveryMs;
+            s.NextRepeat = now + Pace(act, feel).Every;
             Repeat(act);
         }
     }
@@ -283,17 +382,26 @@ sealed class Engine
     void Released(int i, long now, Compiled c)
     {
         ref var s = ref slots[i];
+        if (s.Paired && PartnerOf(i) is (_, int partner))
+        {
+            ref var other = ref slots[partner];
+            if (other.Paired && other.Act is { } both)
+            {
+                Stop(both);
+                other.Act = null;
+            }
+        }
         if (s.Owner == LayerButtonOwner)
         {
             var layer = c.LayerOf[i];
             if (layer >= 0 && heldLayers.Remove(layer))
                 LayerReleased(layer, now, c);
         }
-        else if (s.Pending is { } tap)
+        else if ((s.Pending ?? s.Waiting) is { } tap)
         {
             Start(tap);
             Stop(tap);
-        } // let go before the long press: the short action
+        } // let go before the long press or the pair window: the short action
         else if (s.Act is { } act)
             Stop(act);
         s = new Slot { Owner = NoOwner };
@@ -402,6 +510,9 @@ sealed class Engine
             case ActionKind.ScrollLeft:
                 output.Wheel(-120, true);
                 break;
+            case ActionKind.PreciseToggle:
+                preciseOn = !preciseOn;
+                break;
             case ActionKind.Precise or ActionKind.None:
                 break;
             default:
@@ -499,10 +610,15 @@ sealed class Engine
 
     Motion? MotionOf(in PadFrame f, Map map, Feel feel)
     {
-        var precise = false;
+        var precise = preciseOn;
         foreach (var s in slots)
+        {
             if (s.Act?.Action == ActionKind.Precise)
                 precise = true;
+            // A click held back for its pair starts where it was aimed: the pointer waits too.
+            if (s.Waiting is not null)
+                return null;
+        }
         bool Moves(string mode, short x, short y, int deadzone) =>
             mode is StickMode.Pointer or StickMode.Scroll
             && (double)x * x + (double)y * y > (double)deadzone * deadzone;
@@ -557,12 +673,13 @@ sealed class Engine
             From(PadBinding.Of(ActionKind.Key, combo, repeat))!;
     }
 
-    /// <summary>A map made ready: what each control does (stick keys included), what the sticks do.</summary>
+    /// <summary>A map made ready: what each control does (stick keys included), each pair (Catalog.Pairs), what the sticks do.</summary>
     sealed class Map
     {
         public required string LeftStick { get; init; }
         public required string RightStick { get; init; }
         public required Act?[] Buttons { get; init; }
+        public required Act?[] Pairs { get; init; }
 
         static readonly Act[] Arrows =
         {
@@ -582,9 +699,12 @@ sealed class Engine
         public static Map From(string left, string right, Dictionary<string, PadBinding> buttons)
         {
             var acts = new Act?[Controls];
+            var pairs = new Act?[Catalog.Pairs.Length];
             foreach (var (id, binding) in buttons)
                 if (Catalog.ControlOf(id) is { } control)
                     acts[(int)control] = Act.From(binding);
+                else if (Catalog.PairOf(id) is { } pair)
+                    pairs[pair] = Act.From(binding, allowHold: false);
             for (var d = 0; d < 4; d++)
             {
                 acts[FirstStickKey + d] =
@@ -601,6 +721,7 @@ sealed class Engine
                 LeftStick = left,
                 RightStick = right,
                 Buttons = acts,
+                Pairs = pairs,
             };
         }
     }
@@ -635,18 +756,29 @@ sealed class Engine
             var apps = new Dictionary<AppRule, Map>(ReferenceEqualityComparer.Instance);
             foreach (var app in s.Apps)
             {
-                apps[app] =
-                    app.Buttons.Count == 0 && app.LeftStick is null && app.RightStick is null
-                        ? baseMap
-                        : Map.From(
-                            app.LeftStick ?? s.Base.LeftStick,
-                            app.RightStick ?? s.Base.RightStick,
-                            new Dictionary<string, PadBinding>(
-                                s.Base.Buttons.Concat(app.Buttons)
-                                    .GroupBy(p => p.Key)
-                                    .Select(g => g.Last())
-                            )
-                        );
+                if (app.Buttons.Count == 0 && app.LeftStick is null && app.RightStick is null)
+                {
+                    apps[app] = baseMap;
+                    continue;
+                }
+                var buttons = new Dictionary<string, PadBinding>(
+                    s.Base.Buttons.Concat(app.Buttons).GroupBy(p => p.Key).Select(g => g.Last())
+                );
+                // An app that gives LT its own job does not inherit the base map's LT + RT.
+                foreach (var (id, first, second) in Catalog.Pairs)
+                    if (
+                        !app.Buttons.ContainsKey(id)
+                        && (
+                            app.Buttons.ContainsKey(Catalog.IdOf(first))
+                            || app.Buttons.ContainsKey(Catalog.IdOf(second))
+                        )
+                    )
+                        buttons.Remove(id);
+                apps[app] = Map.From(
+                    app.LeftStick ?? s.Base.LeftStick,
+                    app.RightStick ?? s.Base.RightStick,
+                    buttons
+                );
             }
             var layerOf = Enumerable.Repeat(-1, FirstStickKey).ToArray();
             var layers = new CompiledLayer[s.Layers.Count];
@@ -699,6 +831,7 @@ sealed class PointerFrames
 
     // Sub-pixel and sub-unit remainders, one per stick: both sticks may move the pointer.
     readonly (double X, double Y)[] remainders = new (double, double)[2];
+    readonly EdgeBoost[] boosts = new EdgeBoost[2];
 
     public PointerFrames() =>
         new Thread(Frames)
@@ -730,6 +863,7 @@ sealed class PointerFrames
                 if (motion is not null)
                     moving.Set(); // moved again meanwhile
                 remainders[0] = remainders[1] = default;
+                boosts[0] = boosts[1] = default;
                 last = -1;
                 continue;
             }
@@ -746,8 +880,8 @@ sealed class PointerFrames
             last = now;
             try
             {
-                Stick(0, m.Left, m.LX, m.LY, m.Feel.LeftDeadzone, dt, m);
-                Stick(1, m.Right, m.RX, m.RY, m.Feel.RightDeadzone, dt, m);
+                Stick(0, m.Left, m.LX, m.LY, m.Feel.LeftDeadzone, dt, now, m);
+                Stick(1, m.Right, m.RX, m.RY, m.Feel.RightDeadzone, dt, now, m);
             }
             catch (Exception e)
             {
@@ -756,18 +890,37 @@ sealed class PointerFrames
         }
     }
 
-    void Stick(int stick, string mode, short x, short y, int deadzone, double dt, Motion m)
+    void Stick(
+        int stick,
+        string mode,
+        short x,
+        short y,
+        int deadzone,
+        double dt,
+        double now,
+        Motion m
+    )
     {
         ref var rest = ref remainders[stick];
+        ref var boost = ref boosts[stick];
         var (cx, cy) = Curve(x, y, deadzone, m.Feel.Curve);
         if (cx == 0 && cy == 0 || mode is not (StickMode.Pointer or StickMode.Scroll))
         {
             rest = default;
+            boost = default;
             return;
         }
         if (mode == StickMode.Pointer)
         {
-            var factor = m.Feel.PointerSpeed * (m.Precise ? m.Feel.PreciseSpeed : 1);
+            if (m.Precise)
+                boost = default;
+            var factor =
+                m.Feel.PointerSpeed
+                * (
+                    m.Precise
+                        ? m.Feel.PreciseSpeed
+                        : boost.Factor(Travel(x, y, deadzone), now, m.Feel.Acceleration)
+                );
             var speed = PointerSpeed * Input.ScreenHeightAtPointer() * dt * factor;
             rest.X += cx * speed;
             rest.Y += cy * speed; // SDL's Y grows downwards, as the screen's
@@ -794,11 +947,50 @@ sealed class PointerFrames
     /// <summary>0..1 past the dead zone, raised to the curve's power: small tilts slow and exact, full tilt quick.</summary>
     internal static (double X, double Y) Curve(short x, short y, int deadzone, double power)
     {
-        var magnitude = Math.Sqrt((double)x * x + (double)y * y);
-        if (magnitude <= deadzone || magnitude == 0)
+        var m = Travel(x, y, deadzone);
+        if (m == 0)
             return (0, 0);
-        var m = Math.Min(1, (magnitude - deadzone) / (32767.0 - deadzone));
-        var scale = Math.Pow(m, power) / magnitude;
+        var scale = Math.Pow(m, power) / Math.Sqrt((double)x * x + (double)y * y);
         return (x * scale, y * scale);
+    }
+
+    /// <summary>How far the stick is tilted past the dead zone, 0..1.</summary>
+    internal static double Travel(short x, short y, int deadzone)
+    {
+        var magnitude = Math.Sqrt((double)x * x + (double)y * y);
+        return magnitude <= deadzone || magnitude == 0
+            ? 0
+            : Math.Min(1, (magnitude - deadzone) / (32767.0 - deadzone));
+    }
+
+    /// <summary>
+    /// Pointer acceleration: once the stick has stayed at the edge DwellMs, the speed ramps up to
+    /// the Acceleration setting over RampMs, so a small move stays slow and a long one across the
+    /// screen gets quick; off the edge it is back to 1 at once. Measured before the curve, and with
+    /// some play (On / Off) so a pad whose gate stops short of full travel still reaches it.
+    /// </summary>
+    internal struct EdgeBoost
+    {
+        const double On = 0.9,
+            Off = 0.85,
+            DwellMs = 200,
+            RampMs = 500;
+        bool atEdge;
+        double since;
+
+        public double Factor(double travel, double now, double max)
+        {
+            if (travel < (atEdge ? Off : On))
+            {
+                atEdge = false;
+                return 1;
+            }
+            if (!atEdge)
+            {
+                atEdge = true;
+                since = now;
+            }
+            return 1 + (max - 1) * Math.Clamp((now - since - DwellMs) / RampMs, 0, 1);
+        }
     }
 }

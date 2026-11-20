@@ -2,7 +2,7 @@
 // On-screen keyboard. OnScreenKeyboard shows this page in a window that never takes the focus,
 // over the app in front, and sends it the controller's buttons; what it types goes to that app
 // through Windows input.
-//   From the host: {type:'open'}  {type:'input', button: up|down|left|right|a|x|y|lt|rt|lb|rb|start|tab}
+//   From the host: {type:'open'}  {type:'input', button: up|down|left|right|a|x|y|lt|rt|start|tab}
 //   To the host:   {type:'ready'}  {type:'type', text}  {type:'combo', keys: 'Ctrl+C'}  {type:'close'}
 //                  {type:'down', keys: 'Alt'}  {type:'up', keys: 'Alt'}   (a modifier held in Windows)
 // Three pages: letters, symbols, and Keys (Esc, arrows, F1..F12, the modifier toggles, shortcuts).
@@ -209,9 +209,8 @@ function render() {
     ["A", "Type"],
     ["X", "Delete"],
     ["Y", "Space"],
-    ["LT", "Shift"],
-    ["RT", "Symbols"],
-    [["LB", "RB"], "Cursor"],
+    [["LT", "RT"], "Cursor"],
+    [["LB", "RB"], "Volume"],
     ["Start", "Enter"],
     ["View", "Tab"],
     ["B", "Close"],
@@ -404,15 +403,9 @@ function onButton(button) {
       typeText(" ");
       break;
     case "lt":
-      cycleShift();
-      break;
-    case "rt":
-      setPage(page === "abc" ? "sym" : "abc");
-      break;
-    case "lb":
       combo("Left");
       break;
-    case "rb":
+    case "rt":
       combo("Right");
       break;
     case "start":
@@ -466,10 +459,8 @@ if (host) {
     Escape: "b",
     Backspace: "x",
     " ": "y",
-    Shift: "lt",
-    Control: "rt",
-    PageUp: "lb",
-    PageDown: "rb",
+    PageUp: "lt",
+    PageDown: "rt",
     F10: "start",
     Tab: "tab",
   };

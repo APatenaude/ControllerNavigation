@@ -76,7 +76,7 @@ sealed record Motion(
 
 /// <summary>
 /// The on-screen keyboard (OnScreenKeyboard). While it is open, the base map's presses go to it
-/// instead (the pad types on it); layers still work.
+/// instead (the pad types on it), except LB and RB (the volume); layers still work.
 /// </summary>
 interface IKeyboardSurface
 {

@@ -229,7 +229,11 @@ sealed class ForegroundTracker
             logged = state;
             Log.Info("In front: " + state);
         }
-        return new Front(on, front.Rule is { Mode: AppMode.Always } ? front.Rule : null);
+        return new Front(
+            on,
+            front.Rule is { Mode: AppMode.Always } ? front.Rule : null,
+            front.ProcessId
+        );
     }
 
     FrontWindow Classify(IntPtr hwnd, Settings s)

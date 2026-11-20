@@ -33,8 +33,19 @@ sealed partial class SettingsForm
                     (f, v) => f.PointerSpeed = (double)v
                 ),
                 new FeelField(
+                    "Acceleration",
+                    "Held at full tilt a moment, the pointer speeds up to this factor, for long moves across the screen. 1 is off.",
+                    "x",
+                    1,
+                    5,
+                    0.1m,
+                    1,
+                    f => (decimal)f.Acceleration,
+                    (f, v) => f.Acceleration = (double)v
+                ),
+                new FeelField(
                     "Precise pointer speed",
-                    "The pointer's speed while a precise button is held, as a factor of the normal speed.",
+                    "The pointer's speed while precise is on (L3) or a precise button is held, as a factor of the normal speed.",
                     "x",
                     0.01m,
                     1,
@@ -161,6 +172,17 @@ sealed partial class SettingsForm
                     (f, v) => f.LongPressMs = (int)v
                 ),
                 new FeelField(
+                    "Two-button window",
+                    "How long a click on one trigger waits for the other, so both together make a middle click.",
+                    "ms",
+                    20,
+                    300,
+                    5,
+                    0,
+                    f => f.PairWindowMs,
+                    (f, v) => f.PairWindowMs = (int)v
+                ),
+                new FeelField(
                     "Switch-on delay",
                     "A window must stay in front this long before the controller turns on, so a game that is starting is never clicked.",
                     "ms",
@@ -187,6 +209,17 @@ sealed partial class SettingsForm
                     0,
                     f => f.VolumeStep,
                     (f, v) => f.VolumeStep = (int)v
+                ),
+                new FeelField(
+                    "Volume repeat rate",
+                    "The time between steps while a volume button is held (after 400 ms).",
+                    "ms",
+                    30,
+                    2000,
+                    5,
+                    0,
+                    f => f.VolumeRepeatMs,
+                    (f, v) => f.VolumeRepeatMs = (int)v
                 ),
             }
         ),
