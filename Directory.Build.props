@@ -6,7 +6,7 @@
     (major.minor.patch); the release workflow refuses a tag that differs.
   -->
   <PropertyGroup>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <!-- Windows x64 only. Named for every build, not just the release: SDL3's package carries
          native files for every platform, and the iOS ones' paths pass Windows' 260-character limit. -->
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
