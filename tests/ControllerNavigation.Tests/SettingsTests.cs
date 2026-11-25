@@ -211,5 +211,39 @@ static class SettingsTests
                 );
             }
         );
+
+        T.Group(
+            "Settings: a version 2 file moves on",
+            () =>
+            {
+                var s = JsonSerializer.Deserialize<Settings>(
+                    """
+                    { "version": 2, "feel": { "acceleration": 3 },
+                      "base": { "buttons": { "rt": { "action": "precise" } } } }
+                    """,
+                    SettingsStore.Json
+                )!;
+                var notes = s.Normalize();
+                T.Check(
+                    s.Version == Migrations.Current && notes.Any(n => n.Contains("version 2")),
+                    "moved to the current version, and logged"
+                );
+                T.Equal(
+                    new Feel().Acceleration,
+                    s.Feel.Acceleration,
+                    "the old default acceleration takes the new one"
+                );
+                T.Check(
+                    s.Base.Buttons["rt"].Action == ActionKind.Precise,
+                    "the version 1 moves are not made again"
+                );
+                var own = JsonSerializer.Deserialize<Settings>(
+                    """{ "version": 2, "feel": { "acceleration": 2 } }""",
+                    SettingsStore.Json
+                )!;
+                own.Normalize();
+                T.Equal(2.0, own.Feel.Acceleration, "an acceleration the owner set stays");
+            }
+        );
     }
 }

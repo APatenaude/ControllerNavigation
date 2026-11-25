@@ -23,7 +23,7 @@ sealed partial class SettingsForm
             {
                 new FeelField(
                     "Pointer speed",
-                    "How fast the pointer moves at full tilt, as a factor of 1.1 screen heights a second.",
+                    "How fast the pointer moves at full tilt, as a factor of 0.7 screen heights a second.",
                     "x",
                     0.05m,
                     10,

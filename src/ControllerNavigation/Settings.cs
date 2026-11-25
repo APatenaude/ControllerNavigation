@@ -125,7 +125,7 @@ sealed class Settings
 /// <summary>How the sticks, triggers and repeats feel (SPEC "Feel").</summary>
 sealed class Feel
 {
-    /// <summary>Pointer speed as a factor of 1.1 screen heights per second at full tilt.</summary>
+    /// <summary>Pointer speed as a factor of 0.7 screen heights per second at full tilt.</summary>
     public double PointerSpeed { get; set; } = 1;
 
     /// <summary>The pointer's speed while a "precise" button is held, as a factor of the normal one.</summary>
@@ -138,7 +138,7 @@ sealed class Feel
     public double Curve { get; set; } = 2;
 
     /// <summary>The pointer's top speed after the stick has been at the edge a moment, as a factor (1: no acceleration).</summary>
-    public double Acceleration { get; set; } = 3;
+    public double Acceleration { get; set; } = 4.5;
 
     /// <summary>Stick travel ignored around the centre, 0..32767.</summary>
     public int LeftDeadzone { get; set; } = 8000;
@@ -878,13 +878,27 @@ static class Defaults
 /// </summary>
 static class Migrations
 {
-    public const int Current = 2;
+    public const int Current = 3;
 
     public static void Apply(Settings s, List<string> notes)
     {
         if (s.Version >= Current)
             return;
-        // Version 1 to 2 (owner, 20 Nov 2026): one map with the HTPC, volume on the bumpers.
+        if (s.Version < 2)
+            V1ToV2(s);
+        // Version 2 to 3 (owner, 25 Nov 2026): a slower start (0.7 screen heights a second, was
+        // 1.1), and more acceleration so long moves keep about the same top speed.
+        if (s.Feel.Acceleration == 3)
+            s.Feel.Acceleration = new Feel().Acceleration;
+        notes.Add(
+            $"Settings from version {s.Version}: untouched defaults moved to version {Current}"
+        );
+        s.Version = Current;
+    }
+
+    // Owner, 20 Nov 2026: one map with the HTPC, volume on the bumpers.
+    static void V1ToV2(Settings s)
+    {
         var buttons = s.Base.Buttons ??= new();
         var now = Defaults.Base().Buttons;
         MoveOn(buttons, V1Base(), now);
@@ -901,8 +915,6 @@ static class Migrations
             MoveOn(layer.Buttons ??= new(), V1Start(), Defaults.Layers()[0].Buttons);
         if (s.Feel.VolumeStep == 4)
             s.Feel.VolumeStep = new Feel().VolumeStep;
-        notes.Add($"Settings from version {s.Version}: untouched defaults moved to version {Current}");
-        s.Version = Current;
     }
 
     static void MoveOn(

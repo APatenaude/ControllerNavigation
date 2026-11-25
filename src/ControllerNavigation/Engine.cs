@@ -823,7 +823,7 @@ sealed class PointerFrames
     [DllImport("dwmapi.dll")]
     static extern int DwmFlush();
 
-    const double PointerSpeed = 1.1; // screen heights per second at full tilt
+    const double PointerSpeed = 0.7; // screen heights per second at full tilt
     const double ScrollSpeed = 2400; // wheel units per second at full tilt (20 notches)
 
     volatile Motion? motion;

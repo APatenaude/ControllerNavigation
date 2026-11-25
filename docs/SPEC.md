@@ -153,10 +153,12 @@ View, and there is no setting to turn that off (9 Nov 2026).
   held since a game, or pressed under a layer, keeps its job. An app override that rebinds either
   button drops the pair there.
 - Acceleration: once the stick has stayed past 90 % of its travel (until it falls under 85 %) for
-  200 ms, the pointer's speed ramps up to the Acceleration factor (default 3) over 500 ms, and is
+  200 ms, the pointer's speed ramps up to the Acceleration factor (default 4.5) over 500 ms, and is
   back to normal the moment the stick leaves the edge; small moves stay slow without holding
   anything. Not while precise. The owner, 20 Nov 2026: "too fast for small moves but too slow for
-  big moves".
+  big moves". Full tilt starts at 0.7 screen heights a second (x1 pointer speed), about 3.2 once
+  accelerated; it started at 1.1 with a factor of 3 until the owner found the start still too fast
+  (25 Nov 2026).
 - Volume in apps that get the mouse only: in a game a held bumper is play, never the volume.
 - Settings files from before 20 Nov 2026 (version 1) have every binding still equal to the old
   defaults moved to these; bindings the owner changed are kept (`Migrations` in `Settings.cs`).
