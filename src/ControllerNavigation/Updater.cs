@@ -928,11 +928,11 @@ static class UpdateJob
                 Log.Warn($"Update: the downloaded exe says it is {version}, not {next}: refused");
                 return Refused;
             }
+            var startApp = AppTasks.AppStarter();
             RunningCopies.Stop(everything: false);
             var swapped = Swap(download);
-            AppTasks.StartApp(
-                swapped ? $"Update to {release.Version}" : "Update (old version back)"
-            );
+            if (File.Exists(AppInfo.InstalledExe)) // not after a swap that lost it (logged)
+                startApp(swapped ? $"Update to {release.Version}" : "Update (old version back)");
             return swapped ? Ok : Failed;
         }
         finally
@@ -946,14 +946,18 @@ static class UpdateJob
     }
 
     // The running exe (this job's own image too) renamed aside, the new one moved in; the old one
-    // put back when that fails.
+    // put back when that fails. While the exe's path is empty this process cannot load an assembly
+    // it has not loaded yet (AppTasks.AppStarter): the move back comes before any message, and the
+    // messages use only Marshal, loaded with this method.
     static bool Swap(string download)
     {
         var exe = AppInfo.InstalledExe;
         var aside = $"{exe}.{Guid.NewGuid().ToString("N")[..8]}.old";
         if (!MoveFileEx(exe, aside, MOVEFILE_WRITE_THROUGH))
         {
-            Log.Error($"Update: {exe} could not be set aside ({LastError()})");
+            Log.Error(
+                $"Update: {exe} could not be set aside ({Marshal.GetPInvokeErrorMessage(Marshal.GetLastPInvokeError())})"
+            );
             return false;
         }
         if (MoveFileEx(download, exe, MOVEFILE_WRITE_THROUGH))
@@ -963,18 +967,19 @@ static class UpdateJob
             );
             return true;
         }
-        var why = LastError();
-        if (MoveFileEx(aside, exe, MOVEFILE_WRITE_THROUGH))
-            Log.Error($"Update: the new exe could not be moved in ({why}); the old one is back");
+        var why = Marshal.GetLastPInvokeError();
+        var back = MoveFileEx(aside, exe, MOVEFILE_WRITE_THROUGH);
+        var backWhy = Marshal.GetLastPInvokeError();
+        if (back)
+            Log.Error(
+                $"Update: the new exe could not be moved in ({Marshal.GetPInvokeErrorMessage(why)}); the old one is back"
+            );
         else
             Log.Error(
-                $"Update: the new exe could not be moved in ({why}), nor the old one put back ({LastError()}): run the installer again"
+                $"Update: the new exe could not be moved in ({Marshal.GetPInvokeErrorMessage(why)}), nor the old one put back ({Marshal.GetPInvokeErrorMessage(backWhy)}): run the installer again"
             );
         return false;
     }
-
-    static string LastError() =>
-        new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error()).Message;
 
     const int MOVEFILE_WRITE_THROUGH = 0x8;
 

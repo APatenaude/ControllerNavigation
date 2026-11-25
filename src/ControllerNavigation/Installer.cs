@@ -1174,18 +1174,45 @@ static class AppTasks
         TaskFolder(service, create: false)!.GetTask(name).Run(null);
     }
 
-    /// <summary>The installer and the update job: the app started as the user, not elevated, through the Start task. Logged; never throws.</summary>
-    public static void StartApp(string mode)
+    /// <summary>The installer: the app started as the user, not elevated, through the Start task. Logged; never throws.</summary>
+    public static void StartApp(string mode) => AppStarter()(mode);
+
+    /// <summary>
+    /// StartApp in two steps: the Start task looked up now, run when the returned action is
+    /// called (with the log's mode). The update job looks it up before its swap: a single-file
+    /// process reads each assembly from its exe's path the first time it needs one, and once the
+    /// new version is there that read fails (a FileNotFoundException with no message), so the
+    /// COM binder must be loaded before. Neither step throws.
+    /// </summary>
+    public static Action<string> AppStarter()
     {
+        dynamic? task = null;
+        var why = "";
         try
         {
-            Run(Start);
-            Log.Info($"{mode}: the app started through the Start task");
+            task = TaskFolder(Scheduler(), create: false)!.GetTask(Start);
         }
         catch (Exception e)
         {
-            Log.Warn($"{mode}: the app did not start ({e.Message}); it starts at the next sign-in");
+            why = $"{e.GetType().Name}: {e.Message}";
         }
+        return mode =>
+        {
+            try
+            {
+                if (task is not null)
+                {
+                    task.Run(null);
+                    Log.Info($"{mode}: the app started through the Start task");
+                    return;
+                }
+            }
+            catch (Exception e)
+            {
+                why = $"{e.GetType().Name}: {e.Message}";
+            }
+            Log.Warn($"{mode}: the app did not start ({why}); it starts at the next sign-in");
+        };
     }
 
     /// <summary>Whether a task runs now, and its last run's result (its program's exit code). Throws when it is not there.</summary>
