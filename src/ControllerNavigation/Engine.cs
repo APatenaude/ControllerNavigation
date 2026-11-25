@@ -823,7 +823,10 @@ sealed class PointerFrames
     [DllImport("dwmapi.dll")]
     static extern int DwmFlush();
 
-    const double PointerSpeed = 0.7; // screen heights per second at full tilt
+    // Full tilt before acceleration: 134 mm a second (0.4 heights of the owner's 34-inch
+    // ultrawides), physical so that a big or scaled-up screen is not faster.
+    const double PointerMmPerSecond = 134;
+    const double UnknownScreenMm = 335; // a screen that reports no size: 0.4 of its height a second
     const double ScrollSpeed = 2400; // wheel units per second at full tilt (20 notches)
 
     volatile Motion? motion;
@@ -919,9 +922,15 @@ sealed class PointerFrames
                 * (
                     m.Precise
                         ? m.Feel.PreciseSpeed
-                        : boost.Factor(Travel(x, y, deadzone), now, m.Feel.Acceleration)
+                        : boost.Factor(
+                            Travel(x, y, deadzone),
+                            now,
+                            m.Feel.Acceleration,
+                            m.Feel.AccelerationMs
+                        )
                 );
-            var speed = PointerSpeed * Input.ScreenHeightAtPointer() * dt * factor;
+            var (pixels, mm) = Input.ScreenHeightAtPointer();
+            var speed = FullTilt(pixels, mm) * dt * factor;
             rest.X += cx * speed;
             rest.Y += cy * speed; // SDL's Y grows downwards, as the screen's
             int dx = (int)rest.X,
@@ -944,6 +953,10 @@ sealed class PointerFrames
         }
     }
 
+    /// <summary>Pixels a second at full tilt, before acceleration, on a screen this tall in pixels and millimetres (0: unknown).</summary>
+    internal static double FullTilt(int pixels, int mm) =>
+        PointerMmPerSecond * pixels / (mm >= 50 ? mm : UnknownScreenMm);
+
     /// <summary>0..1 past the dead zone, raised to the curve's power: small tilts slow and exact, full tilt quick.</summary>
     internal static (double X, double Y) Curve(short x, short y, int deadzone, double power)
     {
@@ -965,20 +978,20 @@ sealed class PointerFrames
 
     /// <summary>
     /// Pointer acceleration: once the stick has stayed at the edge DwellMs, the speed ramps up to
-    /// the Acceleration setting over RampMs, so a small move stays slow and a long one across the
-    /// screen gets quick; off the edge it is back to 1 at once. Measured before the curve, and with
-    /// some play (On / Off) so a pad whose gate stops short of full travel still reaches it.
+    /// the Acceleration setting over rampMs (AccelerationMs), so a small move stays slow and a
+    /// long one across the screen gets quick; off the edge it is back to 1 at once. Measured
+    /// before the curve, and with some play (On / Off) so a pad whose gate stops short of full
+    /// travel still reaches it.
     /// </summary>
     internal struct EdgeBoost
     {
         const double On = 0.9,
             Off = 0.85,
-            DwellMs = 200,
-            RampMs = 500;
+            DwellMs = 200;
         bool atEdge;
         double since;
 
-        public double Factor(double travel, double now, double max)
+        public double Factor(double travel, double now, double max, double rampMs)
         {
             if (travel < (atEdge ? Off : On))
             {
@@ -990,7 +1003,7 @@ sealed class PointerFrames
                 atEdge = true;
                 since = now;
             }
-            return 1 + (max - 1) * Math.Clamp((now - since - DwellMs) / RampMs, 0, 1);
+            return 1 + (max - 1) * Math.Clamp((now - since - DwellMs) / rampMs, 0, 1);
         }
     }
 }

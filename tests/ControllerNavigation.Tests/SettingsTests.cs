@@ -213,36 +213,55 @@ static class SettingsTests
         );
 
         T.Group(
-            "Settings: a version 2 file moves on",
+            "Settings: version 2 and 3 files move on",
             () =>
             {
-                var s = JsonSerializer.Deserialize<Settings>(
+                Settings Read(string json)
+                {
+                    var s = JsonSerializer.Deserialize<Settings>(json, SettingsStore.Json)!;
+                    s.Normalize();
+                    return s;
+                }
+                var v2 = JsonSerializer.Deserialize<Settings>(
                     """
                     { "version": 2, "feel": { "acceleration": 3 },
                       "base": { "buttons": { "rt": { "action": "precise" } } } }
                     """,
                     SettingsStore.Json
                 )!;
-                var notes = s.Normalize();
+                var notes = v2.Normalize();
                 T.Check(
-                    s.Version == Migrations.Current && notes.Any(n => n.Contains("version 2")),
+                    v2.Version == Migrations.Current && notes.Any(n => n.Contains("version 2")),
                     "moved to the current version, and logged"
+                );
+                T.Check(
+                    v2.Feel.Acceleration == new Feel().Acceleration
+                        && v2.Base.Buttons["rt"].Action == ActionKind.Precise,
+                    "version 2 (0.2.0): its default 3 takes the new one, the version 1 moves are not made again"
+                );
+                T.Equal(
+                    3.0,
+                    Read("""{ "version": 3, "feel": { "acceleration": 3 } }""").Feel.Acceleration,
+                    "version 3: a 3 there was the owner's own, it stays"
                 );
                 T.Equal(
                     new Feel().Acceleration,
-                    s.Feel.Acceleration,
-                    "the old default acceleration takes the new one"
+                    Read("""{ "version": 3, "feel": { "acceleration": 4.5 } }""").Feel.Acceleration,
+                    "version 3 (0.2.1): its default 4.5 takes the new one"
+                );
+                T.Equal(
+                    2.0,
+                    Read("""{ "version": 3, "feel": { "acceleration": 2 } }""").Feel.Acceleration,
+                    "an acceleration the owner set stays"
                 );
                 T.Check(
-                    s.Base.Buttons["rt"].Action == ActionKind.Precise,
-                    "the version 1 moves are not made again"
+                    Read("""{ "version": 3, "feel": { "preciseSpeed": 0.25 } }""").Feel.PreciseSpeed
+                        == new Feel().PreciseSpeed
+                        && Read(
+                            """{ "version": 3, "feel": { "preciseSpeed": 0.3 } }"""
+                        ).Feel.PreciseSpeed == 0.3,
+                    "the old precise default (a quarter) takes the new one, the owner's own stays"
                 );
-                var own = JsonSerializer.Deserialize<Settings>(
-                    """{ "version": 2, "feel": { "acceleration": 2 } }""",
-                    SettingsStore.Json
-                )!;
-                own.Normalize();
-                T.Equal(2.0, own.Feel.Acceleration, "an acceleration the owner set stays");
             }
         );
     }

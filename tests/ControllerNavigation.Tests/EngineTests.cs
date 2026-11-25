@@ -513,19 +513,39 @@ static class EngineTests
             () =>
             {
                 var b = new PointerFrames.EdgeBoost();
-                T.Equal(1.0, b.Factor(0.95, 0, 3), "at the edge: not at once");
-                T.Equal(1.0, b.Factor(0.95, 200, 3), "nor after 200 ms");
+                T.Equal(1.0, b.Factor(0.95, 0, 3, 1000), "at the edge: not at once");
+                T.Equal(1.0, b.Factor(0.95, 200, 3, 1000), "nor after 200 ms");
                 T.Check(
-                    Math.Abs(b.Factor(0.95, 450, 3) - 2) < 1e-9,
-                    "half way up the ramp after 450 ms"
+                    Math.Abs(b.Factor(0.95, 700, 3, 1000) - 2) < 1e-9,
+                    "half way up a 1 s ramp after 700 ms"
                 );
-                T.Equal(3.0, b.Factor(0.87, 900, 3), "full after 700 ms, kept down to 85 %");
-                T.Equal(1.0, b.Factor(0.8, 910, 3), "off the edge: back to 1 at once");
-                T.Equal(1.0, b.Factor(0.88, 920, 3), "back over 85 % but under 90 %: still 1");
+                T.Equal(3.0, b.Factor(0.87, 1200, 3, 1000), "full after 1.2 s, kept down to 85 %");
+                T.Equal(1.0, b.Factor(0.8, 1210, 3, 1000), "off the edge: back to 1 at once");
                 T.Equal(
                     1.0,
-                    new PointerFrames.EdgeBoost().Factor(1, 5000, 1),
+                    b.Factor(0.88, 1220, 3, 1000),
+                    "back over 85 % but under 90 %: still 1"
+                );
+                T.Equal(
+                    1.0,
+                    new PointerFrames.EdgeBoost().Factor(1, 5000, 1, 1000),
                     "acceleration 1 is off"
+                );
+                double MmPerSecond(int pixels, int mm) =>
+                    PointerFrames.FullTilt(pixels, mm) / pixels * mm;
+                T.Check(
+                    Math.Abs(MmPerSecond(1440, 334) - MmPerSecond(2160, 810)) < 1e-9,
+                    "the same speed in mm on a 34-inch ultrawide and a 65-inch TV at 200 %"
+                );
+                T.Check(
+                    Math.Abs(PointerFrames.FullTilt(1080, 0) / 1080 - 0.4) < 0.001,
+                    "a screen that reports no size: 0.4 of its height a second"
+                );
+                var quick = new PointerFrames.EdgeBoost();
+                quick.Factor(1, 0, 3, 500);
+                T.Check(
+                    Math.Abs(quick.Factor(1, 450, 3, 500) - 2) < 1e-9,
+                    "a 500 ms ramp: half way after 450 ms"
                 );
             }
         );

@@ -73,6 +73,18 @@ static class Input
         public uint Flags;
     }
 
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct MONITORINFOEX
+    {
+        public int Size;
+        public RECT Monitor,
+            Work;
+        public uint Flags;
+
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+        public string Device;
+    }
+
     [DllImport("user32.dll", SetLastError = true)]
     static extern uint SendInput(uint count, INPUT[] inputs, int size);
 
@@ -90,6 +102,20 @@ static class Input
 
     [DllImport("user32.dll")]
     static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFO info);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFOEX info);
+
+    [DllImport("gdi32.dll", CharSet = CharSet.Unicode)]
+    static extern IntPtr CreateDC(string? driver, string device, string? output, IntPtr mode);
+
+    [DllImport("gdi32.dll")]
+    static extern int GetDeviceCaps(IntPtr dc, int index);
+
+    [DllImport("gdi32.dll")]
+    static extern bool DeleteDC(IntPtr dc);
+
+    const int VERTSIZE = 6; // the screen's height in millimetres
 
     const uint INPUT_MOUSE = 0,
         INPUT_KEYBOARD = 1;
@@ -396,17 +422,34 @@ static class Input
         );
     }
 
-    /// <summary>The height in pixels of the screen the pointer is on (the pointer speed is in screen heights).</summary>
-    public static int ScreenHeightAtPointer()
+    /// <summary>
+    /// The height of the screen the pointer is on, in pixels and in millimetres as the screen
+    /// reports it (its EDID; 0 when it does not). Pointer thread only.
+    /// </summary>
+    public static (int Pixels, int Mm) ScreenHeightAtPointer()
     {
-        var info = new MONITORINFO { Size = Marshal.SizeOf<MONITORINFO>() };
+        var info = new MONITORINFOEX { Size = Marshal.SizeOf<MONITORINFOEX>() };
         if (
-            GetCursorPos(out var at)
-            && GetMonitorInfo(MonitorFromPoint(at, MONITOR_DEFAULTTONEAREST), ref info)
+            !GetCursorPos(out var at)
+            || !GetMonitorInfo(MonitorFromPoint(at, MONITOR_DEFAULTTONEAREST), ref info)
         )
-            return Math.Max(1, info.Monitor.Bottom - info.Monitor.Top);
-        return 1080;
+            return (1080, 0);
+        var pixels = Math.Max(1, info.Monitor.Bottom - info.Monitor.Top);
+        var key = (info.Device, pixels);
+        if (!heightsMm.TryGetValue(key, out var mm))
+        {
+            var dc = CreateDC(null, info.Device, null, IntPtr.Zero);
+            if (dc == IntPtr.Zero)
+                return (pixels, 0); // not ready (waking, just plugged in): read again next frame
+            mm = GetDeviceCaps(dc, VERTSIZE);
+            DeleteDC(dc);
+            heightsMm[key] = mm;
+        }
+        return (pixels, mm);
     }
+
+    // By output and pixel height, so a new resolution is read again.
+    static readonly Dictionary<(string, int), int> heightsMm = new();
 
     /// <summary>Wheel scroll: positive = up (or right, for horizontal). 120 is one notch.</summary>
     public static void Wheel(int amount, bool horizontal = false)

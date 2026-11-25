@@ -125,11 +125,11 @@ sealed class Settings
 /// <summary>How the sticks, triggers and repeats feel (SPEC "Feel").</summary>
 sealed class Feel
 {
-    /// <summary>Pointer speed as a factor of 0.7 screen heights per second at full tilt.</summary>
+    /// <summary>Pointer speed as a factor of 134 mm per second at full tilt, on every screen (PointerFrames).</summary>
     public double PointerSpeed { get; set; } = 1;
 
     /// <summary>The pointer's speed while a "precise" button is held, as a factor of the normal one.</summary>
-    public double PreciseSpeed { get; set; } = 0.25;
+    public double PreciseSpeed { get; set; } = 0.5;
 
     /// <summary>Scroll speed as a factor of 2400 wheel units (20 notches) per second at full tilt.</summary>
     public double ScrollSpeed { get; set; } = 1;
@@ -138,7 +138,10 @@ sealed class Feel
     public double Curve { get; set; } = 2;
 
     /// <summary>The pointer's top speed after the stick has been at the edge a moment, as a factor (1: no acceleration).</summary>
-    public double Acceleration { get; set; } = 4.5;
+    public double Acceleration { get; set; } = 3.5;
+
+    /// <summary>How long the speed takes to climb to Acceleration, once the stick has been at the edge 200 ms.</summary>
+    public int AccelerationMs { get; set; } = 2000;
 
     /// <summary>Stick travel ignored around the centre, 0..32767.</summary>
     public int LeftDeadzone { get; set; } = 8000;
@@ -181,6 +184,7 @@ sealed class Feel
         ScrollSpeed = Math.Clamp(ScrollSpeed, 0.05, 10);
         Curve = Math.Clamp(Curve, 1, 4);
         Acceleration = Math.Clamp(Acceleration, 1, 5);
+        AccelerationMs = Math.Clamp(AccelerationMs, 100, 5000);
         LeftDeadzone = Math.Clamp(LeftDeadzone, 0, 30000);
         RightDeadzone = Math.Clamp(RightDeadzone, 0, 30000);
         TriggerPercent = Math.Clamp(TriggerPercent, 5, 95);
@@ -878,7 +882,7 @@ static class Defaults
 /// </summary>
 static class Migrations
 {
-    public const int Current = 3;
+    public const int Current = 4;
 
     public static void Apply(Settings s, List<string> notes)
     {
@@ -886,10 +890,14 @@ static class Migrations
             return;
         if (s.Version < 2)
             V1ToV2(s);
-        // Version 2 to 3 (owner, 25 Nov 2026): a slower start (0.7 screen heights a second, was
-        // 1.1), and more acceleration so long moves keep about the same top speed.
-        if (s.Feel.Acceleration == 3)
+        // The default acceleration was 3x in version 2 (0.2.0) and 4.5x in version 3 (0.2.1).
+        if (
+            s.Version == 2 && s.Feel.Acceleration == 3
+            || s.Version == 3 && s.Feel.Acceleration == 4.5
+        )
             s.Feel.Acceleration = new Feel().Acceleration;
+        if (s.Feel.PreciseSpeed == 0.25) // the default up to version 3
+            s.Feel.PreciseSpeed = new Feel().PreciseSpeed;
         notes.Add(
             $"Settings from version {s.Version}: untouched defaults moved to version {Current}"
         );

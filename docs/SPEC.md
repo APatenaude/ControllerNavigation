@@ -141,7 +141,7 @@ View, and there is no setting to turn that off (9 Nov 2026).
 | LT + RT | middle click |
 | View | Esc |
 | Menu | tap: play/pause; hold: layer 2 |
-| L3 | precise pointer (x0.25) on / off; off again when another app comes in front |
+| L3 | precise pointer (x0.5, no acceleration) on / off; off again when another app comes in front |
 | R3 | on-screen keyboard (manual only, no pop-up on text fields) |
 | Guide | nothing (Windows' own) |
 
@@ -153,12 +153,18 @@ View, and there is no setting to turn that off (9 Nov 2026).
   held since a game, or pressed under a layer, keeps its job. An app override that rebinds either
   button drops the pair there.
 - Acceleration: once the stick has stayed past 90 % of its travel (until it falls under 85 %) for
-  200 ms, the pointer's speed ramps up to the Acceleration factor (default 4.5) over 500 ms, and is
-  back to normal the moment the stick leaves the edge; small moves stay slow without holding
-  anything. Not while precise. The owner, 20 Nov 2026: "too fast for small moves but too slow for
-  big moves". Full tilt starts at 0.7 screen heights a second (x1 pointer speed), about 3.2 once
-  accelerated; it started at 1.1 with a factor of 3 until the owner found the start still too fast
-  (25 Nov 2026).
+  200 ms, the pointer's speed ramps up to the Acceleration factor (default 3.5) over the
+  acceleration time (default 2 s), and is back to normal the moment the stick leaves the edge;
+  small moves stay slow without holding anything. Not while precise. The owner, 20 Nov 2026: "too
+  fast for small moves but too slow for big moves".
+- Pointer speed is physical, the same on every screen: full tilt starts at 134 mm a second (x1
+  pointer speed; 0.4 heights of the owner's 34-inch ultrawides), 469 once accelerated, from the
+  height each screen reports (its EDID, through GDI). A screen that reports none moves 0.4 of its
+  height a second. Precise is half that start speed (67 mm a second), never accelerated. The owner,
+  25 Nov 2026: in screen heights the pointer was too fast on a scaled-up screen (his 65-inch TV at
+  200 %, 2.4 times as fast); he also found the start too fast at 1.1 heights a second, then 0.7
+  (0.2.1, factor 4.5) and 0.55, and settled on 0.4 with a factor of 3.5 over a slower ramp, and
+  precise at half (it was a quarter).
 - Volume in apps that get the mouse only: in a game a held bumper is play, never the volume.
 - Settings files from before 20 Nov 2026 (version 1) have every binding still equal to the old
   defaults moved to these; bindings the owner changed are kept (`Migrations` in `Settings.cs`).
@@ -234,7 +240,7 @@ defaults.
   - Per binding: repeat on/off, and an optional long-press action (tap and hold do different things).
 - **Layers**: each layer is a held button plus its own map. Default: one layer on Guide; more can be
   added, each on its own button.
-- **Feel**: pointer, precise and scroll speeds; acceleration; curve; deadzone per stick; trigger
+- **Feel**: pointer, precise and scroll speeds; acceleration and its time; curve; deadzone per stick; trigger
   threshold; key repeat delay and rate; long-press time; the two-button (pair) window; volume step
   and repeat rate; the ~300 ms on-delay; the power-off hold time.
 - **Apps**: the always/never app rules, each Always app's overrides and title rules; the detection

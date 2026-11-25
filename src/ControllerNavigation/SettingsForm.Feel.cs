@@ -23,7 +23,7 @@ sealed partial class SettingsForm
             {
                 new FeelField(
                     "Pointer speed",
-                    "How fast the pointer moves at full tilt, as a factor of 0.7 screen heights a second.",
+                    "How fast the pointer moves at full tilt, as a factor of 13.4 cm a second, the same on every screen.",
                     "x",
                     0.05m,
                     10,
@@ -38,10 +38,21 @@ sealed partial class SettingsForm
                     "x",
                     1,
                     5,
-                    0.1m,
-                    1,
+                    0.05m,
+                    2,
                     f => (decimal)f.Acceleration,
                     (f, v) => f.Acceleration = (double)v
+                ),
+                new FeelField(
+                    "Acceleration time",
+                    "How long the pointer takes to climb to that top speed, after 0.2 s at full tilt. Longer is gentler.",
+                    "ms",
+                    100,
+                    5000,
+                    100,
+                    0,
+                    f => f.AccelerationMs,
+                    (f, v) => f.AccelerationMs = (int)v
                 ),
                 new FeelField(
                     "Precise pointer speed",
