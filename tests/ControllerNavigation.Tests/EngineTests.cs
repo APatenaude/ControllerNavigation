@@ -537,8 +537,9 @@ static class EngineTests
                 T.Equal(1.0, b.Factor(0.95, 0, 3, 1000), "at the edge: not at once");
                 T.Equal(1.0, b.Factor(0.95, 200, 3, 1000), "nor after 200 ms");
                 T.Check(
-                    Math.Abs(b.Factor(0.95, 700, 3, 1000) - 2) < 1e-9,
-                    "half way up a 1 s ramp after 700 ms"
+                    Math.Abs(b.Factor(0.95, 450, 3, 1000) - 1.5) < 1e-9
+                        && Math.Abs(b.Factor(0.95, 700, 3, 1000) - 2) < 1e-9,
+                    "a straight line: x1.5 a quarter of the way up a 1 s ramp, x2 half way"
                 );
                 T.Equal(3.0, b.Factor(0.87, 1200, 3, 1000), "full after 1.2 s, kept down to 85 %");
                 T.Equal(1.0, b.Factor(0.8, 1210, 3, 1000), "off the edge: back to 1 at once");

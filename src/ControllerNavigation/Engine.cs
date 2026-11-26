@@ -1043,7 +1043,8 @@ sealed class PointerFrames
     /// the Acceleration setting over rampMs (AccelerationMs), so a small move stays slow and a
     /// long one across the screen gets quick; off the edge it is back to 1 at once. Measured
     /// before the curve, and with some play (On / Off) so a pad whose gate stops short of full
-    /// travel still reaches it.
+    /// travel still reaches it. A straight line on purpose: an exponential climb (tried 26 Nov
+    /// 2026) picked up too slowly.
     /// </summary>
     internal struct EdgeBoost
     {

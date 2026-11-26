@@ -292,6 +292,28 @@ static class SettingsTests
                     ),
                     "a layer on another button gets nothing"
                 );
+                T.Equal(
+                    null,
+                    R3UnderLayer(
+                        """{ "version": 5, "layers": [ { "button": "start", "buttons": {} } ] }"""
+                    ),
+                    "version 5: an R3 the owner removed from under Start stays removed"
+                );
+                var v5 = Read(
+                    """{ "version": 5, "feel": { "acceleration": 3.5, "accelerationMs": 2000 } }"""
+                ).Feel;
+                T.Check(
+                    v5.Acceleration == new Feel().Acceleration
+                        && v5.AccelerationMs == new Feel().AccelerationMs,
+                    "versions 4 and 5: the old 3.5x over 2 s takes the new defaults"
+                );
+                var own = Read(
+                    """{ "version": 4, "feel": { "acceleration": 3, "accelerationMs": 2500 } }"""
+                ).Feel;
+                T.Check(
+                    own.Acceleration == 3 && own.AccelerationMs == 2500,
+                    "an acceleration and time the owner set stay"
+                );
             }
         );
     }

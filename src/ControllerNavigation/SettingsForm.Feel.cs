@@ -37,7 +37,7 @@ sealed partial class SettingsForm
                     "Held at full tilt a moment, the pointer speeds up to this factor, for long moves across the screen. 1 is off.",
                     "x",
                     1,
-                    5,
+                    8,
                     0.05m,
                     2,
                     f => (decimal)f.Acceleration,

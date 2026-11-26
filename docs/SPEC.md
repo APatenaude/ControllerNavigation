@@ -153,13 +153,16 @@ View, and there is no setting to turn that off (9 Nov 2026).
   held since a game, or pressed under a layer, keeps its job. An app override that rebinds either
   button drops the pair there.
 - Acceleration: once the stick has stayed past 90 % of its travel (until it falls under 85 %) for
-  200 ms, the pointer's speed ramps up to the Acceleration factor (default 3.5) over the
-  acceleration time (default 2 s), and is back to normal the moment the stick leaves the edge;
-  small moves stay slow without holding anything. Not while precise. The owner, 20 Nov 2026: "too
-  fast for small moves but too slow for big moves".
+  200 ms, the pointer's speed ramps up in a straight line to the Acceleration factor (default
+  4.5, at most 8) over the acceleration time (default 1.3 s), and is back to normal the moment
+  the stick leaves the edge; small moves stay slow without holding anything. Not while precise.
+  The owner, 20 Nov 2026: "too fast for small moves but too slow for big moves". 26 Nov 2026,
+  after 3.5 over 2 s: a higher top speed and a shorter ramp. An exponential climb (the same
+  proportion each moment), tried the same day after 500, 200 and 100 ms at the edge, picked up
+  too slowly.
 - Pointer speed is physical, from the height each screen reports (its EDID, through GDI): full
   tilt starts at 134 mm a second on a desk screen (x1 pointer speed; 0.4 heights of the owner's
-  34-inch ultrawides), 469 once accelerated. A screen taller than a desk one (33.5 cm) is watched
+  34-inch ultrawides), 603 once accelerated. A screen taller than a desk one (33.5 cm) is watched
   from farther away, so it goes x the square root of its height over 33.5 cm: 208 mm a second
   (x1.55) on the owner's 65-inch TV; a smaller one is not slower. A screen that reports none (or
   under 10 cm, an aspect ratio only) moves 0.4 of its height a second; sizes are read again every

@@ -89,7 +89,7 @@ sealed class ControllerMenu : IMenuSurface, IDisposable
         [MenuRow.Acceleration] = new(
             0.25,
             1,
-            5,
+            8,
             f => f.Acceleration,
             (f, v) => f.Acceleration = v,
             v => v <= 1 ? "Off" : $"x{v:0.0#}"

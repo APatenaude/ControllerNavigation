@@ -138,10 +138,10 @@ sealed class Feel
     public double Curve { get; set; } = 2;
 
     /// <summary>The pointer's top speed after the stick has been at the edge a moment, as a factor (1: no acceleration).</summary>
-    public double Acceleration { get; set; } = 3.5;
+    public double Acceleration { get; set; } = 4.5;
 
     /// <summary>How long the speed takes to climb to Acceleration, once the stick has been at the edge 200 ms.</summary>
-    public int AccelerationMs { get; set; } = 2000;
+    public int AccelerationMs { get; set; } = 1300;
 
     /// <summary>Stick travel ignored around the centre, 0..32767.</summary>
     public int LeftDeadzone { get; set; } = 8000;
@@ -183,7 +183,7 @@ sealed class Feel
         PreciseSpeed = Math.Clamp(PreciseSpeed, 0.01, 1);
         ScrollSpeed = Math.Clamp(ScrollSpeed, 0.05, 10);
         Curve = Math.Clamp(Curve, 1, 4);
-        Acceleration = Math.Clamp(Acceleration, 1, 5);
+        Acceleration = Math.Clamp(Acceleration, 1, 8);
         AccelerationMs = Math.Clamp(AccelerationMs, 100, 5000);
         LeftDeadzone = Math.Clamp(LeftDeadzone, 0, 30000);
         RightDeadzone = Math.Clamp(RightDeadzone, 0, 30000);
@@ -888,7 +888,7 @@ static class Defaults
 /// </summary>
 static class Migrations
 {
-    public const int Current = 5;
+    public const int Current = 6;
 
     public static void Apply(Settings s, List<string> notes)
     {
@@ -896,12 +896,16 @@ static class Migrations
             return;
         if (s.Version < 2)
             V1ToV2(s);
-        // The default acceleration was 3x in version 2 (0.2.0) and 4.5x in version 3 (0.2.1).
+        // The default acceleration was 3x in version 2 (0.2.0), 4.5x in version 3 (0.2.1) and 3.5x
+        // over 2 s in versions 4 and 5.
         if (
             s.Version == 2 && s.Feel.Acceleration == 3
             || s.Version == 3 && s.Feel.Acceleration == 4.5
+            || s.Version is 4 or 5 && s.Feel.Acceleration == 3.5
         )
             s.Feel.Acceleration = new Feel().Acceleration;
+        if (s.Version is 4 or 5 && s.Feel.AccelerationMs == 2000)
+            s.Feel.AccelerationMs = new Feel().AccelerationMs;
         if (s.Version <= 3 && s.Feel.PreciseSpeed == 0.25) // the default up to version 3
             s.Feel.PreciseSpeed = new Feel().PreciseSpeed;
         // Version 5: Start + R3 opens the controller menu, unless R3 has a job under Start already.
