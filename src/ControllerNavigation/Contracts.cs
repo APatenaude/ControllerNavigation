@@ -93,6 +93,22 @@ interface IKeyboardSurface
     void Pad(PadControl control, bool repeat);
 }
 
+/// <summary>
+/// The controller menu (ControllerMenu). While it is open, in any app and while paused, every new
+/// press goes to it instead; the sticks keep their jobs.
+/// </summary>
+interface IMenuSurface
+{
+    /// <summary>Read on the input thread at every poll; true from the moment Open is called.</summary>
+    bool IsOpen { get; }
+
+    /// <summary>Opens it over the app in front; from the input thread.</summary>
+    void Open();
+
+    /// <summary>A button pressed while it is open (repeat: a held D-pad direction); from the input thread.</summary>
+    void Pad(PadControl control, bool repeat);
+}
+
 /// <summary>The window a system action acts on, and the pad that asked (power off).</summary>
 readonly record struct ActionTarget(IntPtr Window, bool Elevated, int XInputSlot);
 

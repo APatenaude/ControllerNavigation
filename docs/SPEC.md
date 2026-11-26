@@ -200,6 +200,7 @@ On-screen keyboard pages (HTPC's, extended on 9 Nov 2026 at the owner's request)
 | D-pad up | maximize (restore if already maximized) |
 | D-pad down | minimize |
 | North (Y) | minimize all |
+| R3 | the controller menu (below) |
 
 - Timing (HTPC's Start-chord rule): a button pressed while Guide is held stays a layer-2 button until
   it is released, even if Guide is released first; a button held before Guide was pressed keeps its
@@ -230,6 +231,44 @@ On-screen keyboard pages (HTPC's, extended on 9 Nov 2026 at the owner's request)
 - The timing rules above say "Guide" from the first design; they apply to whichever button holds the
   layer.
 
+## Controller menu (Start + R3)
+
+The owner, 26 Nov 2026: in an app that reads the controller he wants to force the mouse from the
+pad, but not through a bare shortcut ("I'm gonna forget it and hit it accidentally and then I'm
+gonna think it's broken"). So a menu, which shows what is going on before anything changes.
+
+- **Opens with Start + R3** (the `menu` action, layer 2's R3; settings version 5 adds it unless R3
+  already has a job there). Everywhere, games included (after the 150 ms game delay), and while
+  paused. Not while the session is locked; it closes at a lock.
+- **A dark panel down the left edge** of the screen the app in front is on, the screen's full
+  height, sized from that height (readable from the couch on a TV), Windows 11's dark colors and
+  icon font (the owner, 26 Nov 2026, after a plain light first version: "make it dark mode ...
+  don't make it so bare bones and ugly"). Topmost and never activated (as the on-screen keyboard),
+  so the app keeps the foreground and its answer.
+- It shows the app in front with its icon and why it gets the mouse or not (a green dot "Mouse
+  on", an amber one "Left alone", with the reason), then:
+  - **This app / Mouse in this app**: Automatic / Always / Excluded, picked with left and right,
+    saved with A (the tray's same app rule; the owner chose a saved rule over "until the app
+    closes");
+  - **Pointer**: pointer speed, top speed (acceleration) and scroll speed, changed with left and
+    right and saved 0.6 s after the last change (one write, not one per step), so the stick tries
+    the new speed while the menu is still open;
+  - **Controller Navigation**: pause / resume, turn off this controller (only for an XInput pad,
+    the one that pressed last), what the buttons do (a page listing the sticks, the base map and
+    each layer from the settings; B goes back, the D-pad scrolls when it does not fit), all
+    settings (the settings window, brought in front).
+  No mode row when nothing, or this tool's own window, is in front.
+- While it is open it takes every new button press: D-pad up and down move (held, they repeat), A
+  does the row, B or Start closes. Nothing reaches Windows from the pad, layers included, except
+  that the sticks keep moving the pointer and scrolling where the app gets the mouse (no arrow or
+  WASD keys from a stick). What was down when it opened (Start and R3)
+  or when it closes (the A that picked) does nothing until released.
+- Closes after A on a row that acts, B or Start, 15 s without a press, and when another window
+  comes in front (not for a moment of no window at all). Pending speed changes are saved then.
+- Known limits: the app in front still sees every press (Start may open a game's own menu); the
+  panel does not show over exclusive-fullscreen games or over Start, Search and Task View, where
+  it still takes the presses for up to 15 s.
+
 ## Configurability
 
 Everything is set in the settings window (opened from the tray: a small native Windows window with
@@ -239,7 +278,7 @@ defaults.
 - **Bindings**: any control to any action, in the base map, in each layer and in each app override.
   - Actions: key or key combo (Win included), mouse button, scroll step, volume up/down, mute, media
     play/pause/next/previous, window move/maximize/minimize, minimize all, on-screen keyboard, run a
-    program or open a file/URL, pause the tool, nothing.
+    program or open a file/URL, pause the tool, the controller menu, nothing.
   - Sticks: pointer, scroll, arrow keys, WASD, nothing.
   - Per binding: repeat on/off, and an optional long-press action (tap and hold do different things).
 - **Layers**: each layer is a held button plus its own map. Default: one layer on Guide; more can be

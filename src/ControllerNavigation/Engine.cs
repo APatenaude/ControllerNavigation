@@ -53,10 +53,12 @@ sealed class Engine
     const sbyte NoOwner = -2,
         BaseOwner = -1,
         KeyboardOwner = -3,
-        LayerButtonOwner = -4;
+        LayerButtonOwner = -4,
+        MenuOwner = -5;
 
     readonly IOutput output;
     readonly IKeyboardSurface keyboard;
+    readonly IMenuSurface menu;
     volatile Compiled compiled;
     Compiled? active; // what the last poll used: a new one lets go of everything
     readonly Slot[] slots = new Slot[Controls];
@@ -68,11 +70,13 @@ sealed class Engine
     Motion? lastMotion;
     bool preciseOn; // ActionKind.PreciseToggle, until pressed again or another app comes in front
     uint lastProcess;
+    bool menuWasOpen;
 
-    public Engine(IOutput output, IKeyboardSurface keyboard, Settings settings)
+    public Engine(IOutput output, IKeyboardSurface keyboard, IMenuSurface menu, Settings settings)
     {
         this.output = output;
         this.keyboard = keyboard;
+        this.menu = menu;
         compiled = Compiled.From(settings);
     }
 
@@ -108,7 +112,9 @@ sealed class Engine
         var c = compiled;
         if (c != active)
         {
-            ReleaseAll();
+            // The menu let go of everything when it opened: a speed it saves keeps the precise toggle and a held D-pad.
+            if (!menuWasOpen)
+                ReleaseAll();
             active = c;
             layerHolds = new LayerHold[c.Layers.Length];
         }
@@ -123,11 +129,18 @@ sealed class Engine
             preciseOn = false;
         }
 
+        if (menu.IsOpen)
+        {
+            MenuPoll(f, now, c, map, allowed);
+            return;
+        }
+        menuWasOpen = false;
+
         if (paused)
         {
             ReleaseAll();
             var held = Bits(f, c, map, front.Allowed, previous);
-            ResumeOnPausePress(held & ~previous, held, c, map, front.Allowed);
+            PausedPress(held & ~previous, held, c, map, front.Allowed);
             previous = held;
             SetMotion(null);
             return;
@@ -188,8 +201,8 @@ sealed class Engine
 
     static bool IsLayerButton(int i, Compiled c) => i < FirstStickKey && c.LayerOf[i] >= 0;
 
-    /// <summary>Paused, a press bound to Pause still resumes: under a held layer button, else in the base map of an app that gets the mouse.</summary>
-    void ResumeOnPausePress(uint pressed, uint held, Compiled c, Map map, bool allowed)
+    /// <summary>Paused, a press bound to Pause still resumes and one bound to the menu opens it: under a held layer button, else in the base map of an app that gets the mouse.</summary>
+    void PausedPress(uint pressed, uint held, Compiled c, Map map, bool allowed)
     {
         for (var i = 0; i < FirstStickKey; i++)
         {
@@ -207,11 +220,51 @@ sealed class Engine
                 layer >= 0 ? c.Layers[layer].Buttons[i]
                 : allowed ? map.Buttons[i]
                 : null;
-            if (act?.Action != ActionKind.Pause)
+            if (act?.Action is not (ActionKind.Pause or ActionKind.Menu))
                 continue;
-            output.System(ActionKind.Pause, null);
+            output.System(act.Action, null);
             return;
         }
+    }
+
+    /// <summary>
+    /// The menu is open: it gets every new button press (held D-pad directions repeat), nothing else
+    /// runs. What was down when it opened (Start and R3) or when it closes (the A that picked) stays
+    /// ignored until released. The sticks keep moving the pointer where the app gets the mouse.
+    /// </summary>
+    void MenuPoll(in PadFrame f, long now, Compiled c, Map map, bool allowed)
+    {
+        if (!menuWasOpen)
+        {
+            menuWasOpen = true;
+            var precise = preciseOn;
+            ReleaseAll();
+            preciseOn = precise;
+        }
+        var bits = Bits(f, c, map, allowed, previous);
+        for (var i = 0; i < FirstStickKey; i++)
+        {
+            ref var s = ref slots[i];
+            if ((bits & (1u << i)) == 0)
+                s = new Slot { Owner = NoOwner };
+            else if ((previous & (1u << i)) == 0)
+            {
+                s = new Slot
+                {
+                    Owner = MenuOwner,
+                    DownAt = now,
+                    NextRepeat = now + c.Feel.RepeatDelayMs,
+                };
+                menu.Pad((PadControl)i, repeat: false);
+            }
+            else if (s.Owner == MenuOwner && IsDirection(i) && now >= s.NextRepeat)
+            {
+                s.NextRepeat = now + c.Feel.RepeatEveryMs;
+                menu.Pad((PadControl)i, repeat: true);
+            }
+        }
+        previous = bits;
+        SetMotion(allowed && !keyboard.IsOpen ? MotionOf(f, map, c.Feel) : null);
     }
 
     void Pressed(int i, long now, Compiled c, Map map, bool allowed, bool keyboardOpen)

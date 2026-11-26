@@ -18,8 +18,15 @@ static class EngineTests
         public void Wheel(int amount, bool horizontal) =>
             Calls.Add($"wheel{(horizontal ? " h" : "")} {amount}");
 
-        public void System(string action, string? arg) =>
+        /// <summary>The menu the "menu" action opens, as TrayApp's output does.</summary>
+        public FakeMenu? Menu;
+
+        public void System(string action, string? arg)
+        {
             Calls.Add("system " + action + (arg is null ? "" : " " + arg));
+            if (action == ActionKind.Menu)
+                Menu?.Open();
+        }
 
         public void Motion(Motion? motion) => LastMotion = motion;
 
@@ -51,11 +58,24 @@ static class EngineTests
             Presses.Add(control + (repeat ? " repeat" : ""));
     }
 
+    sealed class FakeMenu : IMenuSurface
+    {
+        public bool Shown;
+        public readonly List<string> Presses = new();
+        public bool IsOpen => Shown;
+
+        public void Open() => Shown = true;
+
+        public void Pad(PadControl control, bool repeat) =>
+            Presses.Add(control + (repeat ? " repeat" : ""));
+    }
+
     /// <summary>An engine and a clock: Poll sends a frame at the current time, then moves the clock on.</summary>
     sealed class Rig
     {
         public readonly Recorder Out = new();
         public readonly FakeKeyboard Keyboard = new();
+        public readonly FakeMenu Menu = new();
         public readonly Engine Engine;
         public readonly Settings Settings;
         public long Now = 1000;
@@ -67,7 +87,8 @@ static class EngineTests
         {
             Settings = settings ?? GuideLayer();
             Settings.Normalize();
-            Engine = new Engine(Out, Keyboard, Settings);
+            Out.Menu = Menu;
+            Engine = new Engine(Out, Keyboard, Menu, Settings);
         }
 
         public void Poll(
@@ -845,6 +866,91 @@ static class EngineTests
                 );
                 r.Poll(0, lt: 5000);
                 T.Check(r.Out.Take() is ["mouse Right up"], "under 20 %: released");
+            }
+        );
+
+        T.Group(
+            "Engine: controller menu (today's defaults)",
+            () =>
+            {
+                var r = new Rig(new Settings());
+                r.Poll(0);
+                r.Hold(B(PadControl.Start), 200);
+                r.Poll(B(PadControl.Start, PadControl.R3));
+                T.Check(
+                    r.Menu.Shown && r.Out.Take() is ["system menu"],
+                    "Start + R3 opens the menu"
+                );
+                r.Poll(B(PadControl.Start, PadControl.R3, PadControl.Down));
+                r.Poll(B(PadControl.Start, PadControl.Down));
+                r.Poll(B(PadControl.Down));
+                r.Poll(0);
+                r.Poll(B(PadControl.South));
+                T.Check(
+                    r.Out.Take().Count == 0
+                        && r.Menu.Presses.SequenceEqual(new[] { "Down", "South" }),
+                    $"open, Start still held: D-pad down goes to the menu (no minimize), A is no Enter, Start let go is no play/pause ({string.Join(", ", r.Menu.Presses)})"
+                );
+                r.Menu.Shown = false; // A picked: the menu closed while A is still down
+                r.Poll(B(PadControl.South));
+                r.Poll(0);
+                T.Check(r.Out.Take().Count == 0, "the A that picked is no Enter once it closes");
+                r.Poll(B(PadControl.South));
+                r.Poll(0);
+                T.Check(r.Out.Take() is ["down Enter", "up Enter"], "the next A is Enter again");
+
+                r.Menu.Shown = true;
+                r.Menu.Presses.Clear();
+                r.Hold(B(PadControl.Down), 350 + 60 + 4);
+                r.Hold(B(PadControl.South), 500);
+                r.Poll(0, lx: Full);
+                T.Check(
+                    r.Menu.Presses.SequenceEqual(new[] { "Down", "Down repeat", "South" })
+                        && r.Out.LastMotion is not null,
+                    $"a held D-pad direction repeats, a held A does not, the stick still moves the pointer ({string.Join(", ", r.Menu.Presses)})"
+                );
+
+                var k = new Rig(new Settings());
+                k.Poll(0);
+                k.Poll(B(PadControl.L3));
+                k.Poll(0);
+                k.Menu.Shown = true;
+                k.Poll(0);
+                k.Settings.Feel.PointerSpeed = 2; // the menu saved a speed
+                k.Engine.Apply(SettingsStore.Copy(k.Settings));
+                k.Poll(0);
+                k.Poll(0, lx: Full);
+                T.Check(
+                    k.Out.LastMotion is { Precise: true }
+                        && k.Out.LastMotion.Feel.PointerSpeed == 2,
+                    "a speed saved while it is open applies at once and keeps the precise toggle"
+                );
+
+                var g = new Rig(new Settings()) { Allowed = false };
+                g.Poll(0);
+                g.Hold(B(PadControl.Start), 200);
+                g.Poll(B(PadControl.Start, PadControl.R3));
+                g.Poll(B(PadControl.Start));
+                g.Poll(0);
+                g.Poll(B(PadControl.South), lx: Full);
+                T.Check(
+                    g.Out.Take() is ["system menu"]
+                        && g.Menu.Presses is ["South"]
+                        && g.Out.LastMotion is null,
+                    "in a game: it opens and gets the presses, the stick moves no pointer"
+                );
+
+                var p = new Rig(new Settings());
+                p.Poll(0);
+                p.Engine.Paused = true;
+                p.Poll(B(PadControl.Start));
+                p.Poll(B(PadControl.Start, PadControl.R3));
+                p.Poll(0);
+                p.Poll(B(PadControl.Down));
+                T.Check(
+                    p.Out.Take() is ["system menu"] && p.Menu.Presses is ["Down"],
+                    "paused: Start + R3 still opens it, and it gets the presses"
+                );
             }
         );
 

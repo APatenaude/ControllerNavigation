@@ -6,7 +6,7 @@ namespace ControllerNavigation;
 // The Buttons and Layers dialogs, and the rows they and the app editor are made of (BindingGrid).
 sealed partial class SettingsForm
 {
-    static readonly Dictionary<string, string> StickLabels = new()
+    internal static readonly Dictionary<string, string> StickLabels = new()
     {
         [StickMode.Pointer] = "Mouse pointer",
         [StickMode.Scroll] = "Scrolling",

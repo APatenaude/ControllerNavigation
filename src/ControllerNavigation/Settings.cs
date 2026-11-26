@@ -432,6 +432,7 @@ static class ActionKind
         Keyboard = "keyboard",
         Run = "run",
         Pause = "pause",
+        Menu = "menu",
         PowerOff = "powerOff";
 
     public static readonly string[] All =
@@ -463,6 +464,7 @@ static class ActionKind
         Keyboard,
         Run,
         Pause,
+        Menu,
         PowerOff,
     };
 
@@ -494,6 +496,7 @@ static class ActionKind
                 or Keyboard
                 or Run
                 or Pause
+                or Menu
                 or PowerOff;
 
     /// <summary>For the settings window.</summary>
@@ -526,6 +529,7 @@ static class ActionKind
         [Keyboard] = "On-screen keyboard",
         [Run] = "Run a program, file or URL",
         [Pause] = "Pause / resume the controller tool",
+        [Menu] = "Controller menu (mouse in this app, pause)",
         [PowerOff] = "Turn off the controller",
     };
 }
@@ -829,6 +833,8 @@ static class Defaults
                     ["up"] = PadBinding.Of(ActionKind.Maximize),
                     ["down"] = PadBinding.Of(ActionKind.Minimize),
                     ["north"] = PadBinding.Of(ActionKind.MinimizeAll),
+                    // Not Start held alone: a game may use that (hold to skip).
+                    ["r3"] = PadBinding.Of(ActionKind.Menu),
                 },
             },
         };
@@ -882,7 +888,7 @@ static class Defaults
 /// </summary>
 static class Migrations
 {
-    public const int Current = 4;
+    public const int Current = 5;
 
     public static void Apply(Settings s, List<string> notes)
     {
@@ -896,8 +902,11 @@ static class Migrations
             || s.Version == 3 && s.Feel.Acceleration == 4.5
         )
             s.Feel.Acceleration = new Feel().Acceleration;
-        if (s.Feel.PreciseSpeed == 0.25) // the default up to version 3
+        if (s.Version <= 3 && s.Feel.PreciseSpeed == 0.25) // the default up to version 3
             s.Feel.PreciseSpeed = new Feel().PreciseSpeed;
+        // Version 5: Start + R3 opens the controller menu, unless R3 has a job under Start already.
+        if (s.Version <= 4 && s.Layers.FirstOrDefault(l => l?.Button == "start") is { } start)
+            (start.Buttons ??= new()).TryAdd("r3", PadBinding.Of(ActionKind.Menu));
         notes.Add(
             $"Settings from version {s.Version}: untouched defaults moved to version {Current}"
         );

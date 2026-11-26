@@ -262,6 +262,36 @@ static class SettingsTests
                         ).Feel.PreciseSpeed == 0.3,
                     "the old precise default (a quarter) takes the new one, the owner's own stays"
                 );
+                T.Equal(
+                    0.25,
+                    Read(
+                        """{ "version": 4, "feel": { "preciseSpeed": 0.25 } }"""
+                    ).Feel.PreciseSpeed,
+                    "version 4: a precise speed of 0.25 was the owner's own, it stays"
+                );
+                string? R3UnderLayer(string json) =>
+                    Read(json).Layers[0].Buttons.GetValueOrDefault("r3")?.Action;
+                T.Equal(
+                    ActionKind.Menu,
+                    R3UnderLayer(
+                        """{ "version": 4, "layers": [ { "button": "start", "buttons": { "up": { "action": "maximize" } } } ] }"""
+                    ),
+                    "version 4: Start + R3 opens the menu"
+                );
+                T.Equal(
+                    ActionKind.Mute,
+                    R3UnderLayer(
+                        """{ "version": 4, "layers": [ { "button": "start", "buttons": { "r3": { "action": "mute" } } } ] }"""
+                    ),
+                    "an R3 the owner bound under Start keeps its job"
+                );
+                T.Equal(
+                    null,
+                    R3UnderLayer(
+                        """{ "version": 4, "layers": [ { "button": "guide", "buttons": {} } ] }"""
+                    ),
+                    "a layer on another button gets nothing"
+                );
             }
         );
     }

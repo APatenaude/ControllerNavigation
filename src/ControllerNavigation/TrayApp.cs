@@ -1,5 +1,6 @@
 using System.Drawing.Drawing2D;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using Microsoft.Win32;
 
 namespace ControllerNavigation;
@@ -10,7 +11,7 @@ namespace ControllerNavigation;
 /// outputs (Input, PointerFrames, ActionRunner, the on-screen keyboard), the elevated helper, the
 /// updater, the settings window.
 /// </summary>
-sealed class TrayApp : ApplicationContext, ISettingsHost
+sealed class TrayApp : ApplicationContext, ISettingsHost, IMenuHost
 {
     /// <summary>The pad must have rested this long before an update restarts the app.</summary>
     static readonly TimeSpan UpdateIdle = TimeSpan.FromMinutes(5);
@@ -18,6 +19,7 @@ sealed class TrayApp : ApplicationContext, ISettingsHost
     readonly SynchronizationContext ui;
     readonly SettingsStore store = new();
     readonly OnScreenKeyboard keyboard;
+    readonly ControllerMenu menu;
     readonly GameDetector detector;
     readonly ForegroundTracker tracker;
     readonly PointerFrames pointer = new();
@@ -44,10 +46,11 @@ sealed class TrayApp : ApplicationContext, ISettingsHost
         SynchronizationContext.SetSynchronizationContext(ui);
         store.Load();
         keyboard = new OnScreenKeyboard(ui);
+        menu = new ControllerMenu(ui, this);
         detector = new GameDetector(() => store.Current);
         tracker = new ForegroundTracker(() => store.Current, detector);
         runner = new ActionRunner(() => store.Current.Feel, keyboard, TogglePause);
-        engine = new Engine(new Output(this), keyboard, store.Current);
+        engine = new Engine(new Output(this), keyboard, menu, store.Current);
         pads = new PadReader(() => store.Current, tracker, engine);
         store.Changed += s =>
         {
@@ -161,6 +164,8 @@ sealed class TrayApp : ApplicationContext, ISettingsHost
         else
             return;
         Log.Info($"Session: {e.Reason}");
+        if (locked)
+            menu.Close();
         ApplyPause();
     }
 
@@ -232,7 +237,7 @@ sealed class TrayApp : ApplicationContext, ISettingsHost
     {
         var current = RuleOf(exe)?.Mode;
         ToolStripMenuItem Item(string text, string? mode) =>
-            new(text, null, (_, _) => SetMode(exe, mode)) { Checked = current == mode };
+            new(text, null, (_, _) => SetMode(exe, mode, "Tray")) { Checked = current == mode };
         return new ToolStripItem[]
         {
             Item("Automatic (unless it reads the controller or is a game)", null),
@@ -245,7 +250,7 @@ sealed class TrayApp : ApplicationContext, ISettingsHost
     /// Gives an exe a fixed answer (its own rule, or the existing rule with that answer switched back
     /// on), or makes it automatic again (taken out of every rule; a rule left with no exe goes).
     /// </summary>
-    void SetMode(string exe, string? mode)
+    void SetMode(string exe, string? mode, string from)
     {
         var s = SettingsStore.Copy(store.Current);
         // Kept only when it already gives this answer and is on: switching a whole unticked rule
@@ -274,7 +279,7 @@ sealed class TrayApp : ApplicationContext, ISettingsHost
                     Mode = mode,
                 }
             );
-        Log.Info($"Tray: {exe} set to {mode ?? "automatic"}");
+        Log.Info($"{from}: {exe} set to {mode ?? "automatic"}");
         store.Save(s);
     }
 
@@ -294,8 +299,28 @@ sealed class TrayApp : ApplicationContext, ISettingsHost
         }
         if (settingsForm.WindowState == FormWindowState.Minimized)
             settingsForm.WindowState = FormWindowState.Normal;
+        // Opened from the controller menu, this process has no right to take the foreground (the
+        // pad is no input of its own): sharing the input state of the window in front lends it.
+        var front = GetForegroundWindow();
+        var theirs = GetWindowThreadProcessId(front, IntPtr.Zero);
+        var ours = GetCurrentThreadId();
+        var attached = theirs != 0 && theirs != ours && AttachThreadInput(ours, theirs, true);
         settingsForm.Activate();
+        if (attached)
+            AttachThreadInput(ours, theirs, false);
     }
+
+    [DllImport("user32.dll")]
+    static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    static extern uint GetWindowThreadProcessId(IntPtr window, IntPtr processId);
+
+    [DllImport("kernel32.dll")]
+    static extern uint GetCurrentThreadId();
+
+    [DllImport("user32.dll")]
+    static extern bool AttachThreadInput(uint attach, uint to, bool on);
 
     /// <summary>The icon and its tooltip: paused, no controller, mouse (the app in front gets it, and why), or left alone (and why).</summary>
     void ShowState()
@@ -343,6 +368,7 @@ sealed class TrayApp : ApplicationContext, ISettingsHost
         updater.Dispose();
         runner.Dispose();
         keyboard.Dispose();
+        menu.Dispose();
         detector.Dispose();
         elevated.Dispose();
         icon.Visible = false;
@@ -411,6 +437,50 @@ sealed class TrayApp : ApplicationContext, ISettingsHost
 
     public event Action? Changed;
 
+    // --- IMenuHost (the controller menu, UI thread) -----------------------------------------
+
+    MenuFront IMenuHost.Front()
+    {
+        var front = tracker.Current;
+        return new MenuFront(
+            front.Window,
+            front.Ours ? null : front.Exe,
+            front.Ours ? null : front.Path,
+            front.Ours ? AppInfo.Name
+                : front.Exe is { } exe ? exe
+                : front.Window != IntPtr.Zero ? "A program that cannot be read"
+                : "No app in front",
+            tracker.LastAllowed,
+            tracker.Reason
+        );
+    }
+
+    string? IMenuHost.ModeOf(string exe) => RuleOf(exe)?.Mode;
+
+    void IMenuHost.SetMode(string exe, string? mode, string from) => SetMode(exe, mode, from);
+
+    void IMenuHost.ChangeFeel(Action<Feel> change)
+    {
+        var s = SettingsStore.Copy(store.Current);
+        change(s.Feel);
+        store.Save(s);
+    }
+
+    bool IMenuHost.Paused => paused;
+
+    void IMenuHost.TogglePause() => TogglePause();
+
+    bool IMenuHost.CanTurnOff => pads.XInputSlot >= 0;
+
+    void IMenuHost.TurnOffController() =>
+        runner.Run(
+            ActionKind.PowerOff,
+            null,
+            new ActionTarget(IntPtr.Zero, false, pads.XInputSlot)
+        );
+
+    void IMenuHost.ShowSettings() => ShowSettings();
+
     /// <summary>What the engine asks for (input thread). Keyboard and pause are done here: they must not wait behind a slow audio call in the runner's queue.</summary>
     sealed class Output(TrayApp app) : IOutput
     {
@@ -430,6 +500,11 @@ sealed class TrayApp : ApplicationContext, ISettingsHost
                 app.keyboard.Toggle();
             else if (action == ActionKind.Pause)
                 app.TogglePause();
+            else if (action == ActionKind.Menu)
+            {
+                if (!app.locked)
+                    app.menu.Open();
+            }
             else
             {
                 var front = app.tracker.Current;
@@ -502,7 +577,7 @@ sealed class TrayIcons : IDisposable
         return icon;
     }
 
-    static GraphicsPath Rounded(float x, float y, float w, float h, float r)
+    internal static GraphicsPath Rounded(float x, float y, float w, float h, float r)
     {
         var p = new GraphicsPath();
         var d = 2 * r;

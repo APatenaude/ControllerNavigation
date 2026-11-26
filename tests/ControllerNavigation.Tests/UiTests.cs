@@ -197,5 +197,102 @@ static class UiTests
                 );
             }
         );
+
+        // CN_SHOTS=<folder> saves each drawing there as a PNG, to look at.
+        T.Group(
+            "UI: controller menu drawing",
+            () =>
+            {
+                var shots = Environment.GetEnvironmentVariable("CN_SHOTS");
+                using var form = new MenuForm();
+                var settings = new Settings();
+                var notepad = Path.Combine(Environment.SystemDirectory, "notepad.exe");
+                void Draw(string name, Rectangle screen, Action<MenuView> set)
+                {
+                    var view = form.View;
+                    (view.Exe, view.Name, view.Status, view.Reason) = (
+                        "notepad.exe",
+                        "notepad.exe",
+                        MenuStatus.Off,
+                        "reads the controller"
+                    );
+                    view.SetIcon(notepad);
+                    (view.Mode, view.Saved, view.Focus, view.Page, view.Scroll) = (
+                        0,
+                        0,
+                        0,
+                        MenuPage.Main,
+                        0
+                    );
+                    view.Feel = new Feel();
+                    view.Rows = ControllerMenu.RowsFor(app: true, canTurnOff: true);
+                    view.Lines = ControllerMenu.ButtonsOf(settings);
+                    set(view);
+                    form.PlaceOn(screen);
+                    using var bitmap = new Bitmap(form.Width, form.Height);
+                    form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, form.Size));
+                    if (shots is not null)
+                        bitmap.Save(Path.Combine(shots, $"menu-{name}.png"));
+                    T.Equal(
+                        screen.Height * 14 / 40,
+                        form.Width,
+                        $"{name}: 14/40 of the screen's height wide"
+                    );
+                }
+                var tv = new Rectangle(0, 0, 3840, 2160);
+                var desk = new Rectangle(3440, 0, 3440, 1440);
+                Draw("tv", tv, _ => { });
+                Draw(
+                    "desk-picked",
+                    desk,
+                    v =>
+                    {
+                        (v.Mode, v.Focus, v.Status, v.Reason) = (1, 1, MenuStatus.On, "automatic");
+                        v.Feel.PointerSpeed = 1.3;
+                    }
+                );
+                Draw(
+                    "desk-long",
+                    desk,
+                    v =>
+                    {
+                        (v.Exe, v.Name) = (
+                            "SomeVeryLongLauncherNameForGames.exe",
+                            "SomeVeryLongLauncherNameForGames.exe"
+                        );
+                        v.Reason = @"in a game folder (steamapps\common)";
+                        v.SetIcon(null);
+                        v.Focus = 6;
+                    }
+                );
+                Draw(
+                    "desk-paused-none",
+                    desk,
+                    v =>
+                    {
+                        (v.Exe, v.Name, v.Status) = (null, "No app in front", MenuStatus.Paused);
+                        v.SetIcon(null);
+                        v.Rows = ControllerMenu.RowsFor(app: false, canTurnOff: false);
+                    }
+                );
+                Draw("tv-buttons", tv, v => v.Page = MenuPage.Buttons);
+                Draw(
+                    "desk-buttons-scrolled",
+                    new Rectangle(0, 0, 1920, 1080),
+                    v => (v.Page, v.Scroll) = (MenuPage.Buttons, 50)
+                );
+
+                var lines = ControllerMenu.ButtonsOf(settings);
+                T.Check(
+                    lines.Contains(new CheatLine("Left stick", "Mouse pointer"))
+                        && lines.Contains(new CheatLine("A", "Enter"))
+                        && lines.Contains(new CheatLine("LB + RB", "Mute / unmute"))
+                        && lines.Contains(new CheatLine("Hold Menu", "", Heading: true))
+                        && lines.Contains(new CheatLine("Menu alone", "Play / pause"))
+                        && lines.Contains(new CheatLine("R3", "Controller menu")),
+                    $"the buttons page lists the defaults in short ({string.Join("; ", lines.Select(l => $"{l.Control}={l.Action}"))})"
+                );
+            }
+        );
     }
 }

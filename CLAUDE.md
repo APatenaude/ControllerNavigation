@@ -36,6 +36,8 @@ so bin and obj go there (`Directory.Build.props`).
 - `SettingsForm.cs`: the settings window, plain WinForms (the owner wants a native window, not a web UI).
 - `OnScreenKeyboard.cs`, `WebUi.cs`, `ui/keyboard.*`: the on-screen keyboard, HTPC's WebView2 page,
   embedded in the exe.
+- `ControllerMenu.cs`: the controller menu (Start + R3), a hand-drawn panel that never takes the
+  focus; the engine hands it every press while it is open.
 - `Installer.cs`, `Updater.cs`, `InputHelper.cs`, `ElevatedInput.cs`, `InputFrame.cs`: install to
   Program Files, the scheduled tasks, auto-update from GitHub releases, the elevated input helper.
 - `Contracts.cs`: types shared across those parts. `Settings.cs`: the settings model and defaults.
