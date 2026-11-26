@@ -538,8 +538,9 @@ static class EngineTests
                     "the same speed in mm on a 34-inch ultrawide and a 65-inch TV at 200 %"
                 );
                 T.Check(
-                    Math.Abs(PointerFrames.FullTilt(1080, 0) / 1080 - 0.4) < 0.001,
-                    "a screen that reports no size: 0.4 of its height a second"
+                    Math.Abs(PointerFrames.FullTilt(1080, 0) / 1080 - 0.4) < 0.001
+                        && PointerFrames.FullTilt(2160, 90) == PointerFrames.FullTilt(2160, 0),
+                    "a screen that reports no size, or under 10 cm (an aspect ratio only): 0.4 of its height a second"
                 );
                 var quick = new PointerFrames.EdgeBoost();
                 quick.Factor(1, 0, 3, 500);

@@ -827,6 +827,7 @@ sealed class PointerFrames
     // ultrawides), physical so that a big or scaled-up screen is not faster.
     const double PointerMmPerSecond = 134;
     const double UnknownScreenMm = 335; // a screen that reports no size: 0.4 of its height a second
+    const int SmallestMm = 100; // under it, no size or an EDID that holds only the aspect ratio (16 x 9 cm)
     const double ScrollSpeed = 2400; // wheel units per second at full tilt (20 notches)
 
     volatile Motion? motion;
@@ -955,7 +956,7 @@ sealed class PointerFrames
 
     /// <summary>Pixels a second at full tilt, before acceleration, on a screen this tall in pixels and millimetres (0: unknown).</summary>
     internal static double FullTilt(int pixels, int mm) =>
-        PointerMmPerSecond * pixels / (mm >= 50 ? mm : UnknownScreenMm);
+        PointerMmPerSecond * pixels / (mm >= SmallestMm ? mm : UnknownScreenMm);
 
     /// <summary>0..1 past the dead zone, raised to the curve's power: small tilts slow and exact, full tilt quick.</summary>
     internal static (double X, double Y) Curve(short x, short y, int deadzone, double power)

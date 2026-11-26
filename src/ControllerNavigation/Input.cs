@@ -436,20 +436,23 @@ static class Input
             return (1080, 0);
         var pixels = Math.Max(1, info.Monitor.Bottom - info.Monitor.Top);
         var key = (info.Device, pixels);
-        if (!heightsMm.TryGetValue(key, out var mm))
+        var now = Environment.TickCount64;
+        var known = heightsMm.TryGetValue(key, out var read);
+        if (!known || now - read.At > 5000)
         {
             var dc = CreateDC(null, info.Device, null, IntPtr.Zero);
             if (dc == IntPtr.Zero)
-                return (pixels, 0); // not ready (waking, just plugged in): read again next frame
-            mm = GetDeviceCaps(dc, VERTSIZE);
+                return (pixels, known ? read.Mm : 0); // not ready (waking, just plugged in): read again next frame
+            read = (GetDeviceCaps(dc, VERTSIZE), now);
             DeleteDC(dc);
-            heightsMm[key] = mm;
+            heightsMm[key] = read;
         }
-        return (pixels, mm);
+        return (pixels, read.Mm);
     }
 
-    // By output and pixel height, so a new resolution is read again.
-    static readonly Dictionary<(string, int), int> heightsMm = new();
+    // By output and pixel height, read again every 5 s: a screen that reported nothing while
+    // waking, or another screen on that output at the same resolution.
+    static readonly Dictionary<(string, int), (int Mm, long At)> heightsMm = new();
 
     /// <summary>Wheel scroll: positive = up (or right, for horizontal). 120 is one notch.</summary>
     public static void Wheel(int amount, bool horizontal = false)

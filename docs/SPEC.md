@@ -159,8 +159,8 @@ View, and there is no setting to turn that off (9 Nov 2026).
   fast for small moves but too slow for big moves".
 - Pointer speed is physical, the same on every screen: full tilt starts at 134 mm a second (x1
   pointer speed; 0.4 heights of the owner's 34-inch ultrawides), 469 once accelerated, from the
-  height each screen reports (its EDID, through GDI). A screen that reports none moves 0.4 of its
-  height a second. Precise is half that start speed (67 mm a second), never accelerated. The owner,
+  height each screen reports (its EDID, through GDI). A screen that reports none (or under 10 cm, an
+  aspect ratio only) moves 0.4 of its height a second; sizes are read again every 5 s. Precise is half that start speed (67 mm a second), never accelerated. The owner,
   25 Nov 2026: in screen heights the pointer was too fast on a scaled-up screen (his 65-inch TV at
   200 %, 2.4 times as fast); he also found the start too fast at 1.1 heights a second, then 0.7
   (0.2.1, factor 4.5) and 0.55, and settled on 0.4 with a factor of 3.5 over a slower ramp, and
