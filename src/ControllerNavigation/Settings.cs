@@ -125,7 +125,7 @@ sealed class Settings
 /// <summary>How the sticks, triggers and repeats feel (SPEC "Feel").</summary>
 sealed class Feel
 {
-    /// <summary>Pointer speed as a factor of 134 mm per second at full tilt, on every screen (PointerFrames).</summary>
+    /// <summary>Pointer speed as a factor of 134 mm per second at full tilt on a desk screen, more on a taller one (PointerFrames.FullTilt).</summary>
     public double PointerSpeed { get; set; } = 1;
 
     /// <summary>The pointer's speed while a "precise" button is held, as a factor of the normal one.</summary>

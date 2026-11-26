@@ -823,10 +823,12 @@ sealed class PointerFrames
     [DllImport("dwmapi.dll")]
     static extern int DwmFlush();
 
-    // Full tilt before acceleration: 134 mm a second (0.4 heights of the owner's 34-inch
-    // ultrawides), physical so that a big or scaled-up screen is not faster.
+    // Full tilt before acceleration: 134 mm a second on a desk screen (0.4 heights of the owner's
+    // 34-inch ultrawides), physical so that a scaled-up screen is not faster. A taller screen is
+    // watched from farther away (a TV from the couch): x the square root of its height over a desk
+    // screen's, 1.55 on a 65-inch TV (the owner, 26 Nov 2026: 134 there too slow, 2.4 times too fast).
     const double PointerMmPerSecond = 134;
-    const double UnknownScreenMm = 335; // a screen that reports no size: 0.4 of its height a second
+    const double DeskScreenMm = 335; // also what a screen that reports no size counts as: 0.4 of its height a second
     const int SmallestMm = 100; // under it, no size or an EDID that holds only the aspect ratio (16 x 9 cm)
     const double ScrollSpeed = 2400; // wheel units per second at full tilt (20 notches)
 
@@ -955,8 +957,14 @@ sealed class PointerFrames
     }
 
     /// <summary>Pixels a second at full tilt, before acceleration, on a screen this tall in pixels and millimetres (0: unknown).</summary>
-    internal static double FullTilt(int pixels, int mm) =>
-        PointerMmPerSecond * pixels / (mm >= SmallestMm ? mm : UnknownScreenMm);
+    internal static double FullTilt(int pixels, int mm)
+    {
+        double height = mm >= SmallestMm ? mm : DeskScreenMm;
+        return PointerMmPerSecond
+            * Math.Sqrt(Math.Max(height, DeskScreenMm) / DeskScreenMm)
+            * pixels
+            / height;
+    }
 
     /// <summary>0..1 past the dead zone, raised to the curve's power: small tilts slow and exact, full tilt quick.</summary>
     internal static (double X, double Y) Curve(short x, short y, int deadzone, double power)

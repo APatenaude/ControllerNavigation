@@ -534,8 +534,15 @@ static class EngineTests
                 double MmPerSecond(int pixels, int mm) =>
                     PointerFrames.FullTilt(pixels, mm) / pixels * mm;
                 T.Check(
-                    Math.Abs(MmPerSecond(1440, 334) - MmPerSecond(2160, 810)) < 1e-9,
-                    "the same speed in mm on a 34-inch ultrawide and a 65-inch TV at 200 %"
+                    Math.Abs(MmPerSecond(1440, 334) - 134) < 1e-9
+                        && Math.Abs(MmPerSecond(1080, 299) - 134) < 1e-9,
+                    "134 mm a second on desk screens, a 24-inch one too (smaller: not slower)"
+                );
+                T.Check(
+                    Math.Abs(
+                        MmPerSecond(2160, 810) / MmPerSecond(1440, 334) - Math.Sqrt(810 / 335.0)
+                    ) < 1e-9,
+                    "a 65-inch TV at 200 %: x1.55, the square root of its height over a desk screen's"
                 );
                 T.Check(
                     Math.Abs(PointerFrames.FullTilt(1080, 0) / 1080 - 0.4) < 0.001

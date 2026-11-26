@@ -157,14 +157,18 @@ View, and there is no setting to turn that off (9 Nov 2026).
   acceleration time (default 2 s), and is back to normal the moment the stick leaves the edge;
   small moves stay slow without holding anything. Not while precise. The owner, 20 Nov 2026: "too
   fast for small moves but too slow for big moves".
-- Pointer speed is physical, the same on every screen: full tilt starts at 134 mm a second (x1
-  pointer speed; 0.4 heights of the owner's 34-inch ultrawides), 469 once accelerated, from the
-  height each screen reports (its EDID, through GDI). A screen that reports none (or under 10 cm, an
-  aspect ratio only) moves 0.4 of its height a second; sizes are read again every 5 s. Precise is half that start speed (67 mm a second), never accelerated. The owner,
-  25 Nov 2026: in screen heights the pointer was too fast on a scaled-up screen (his 65-inch TV at
+- Pointer speed is physical, from the height each screen reports (its EDID, through GDI): full
+  tilt starts at 134 mm a second on a desk screen (x1 pointer speed; 0.4 heights of the owner's
+  34-inch ultrawides), 469 once accelerated. A screen taller than a desk one (33.5 cm) is watched
+  from farther away, so it goes x the square root of its height over 33.5 cm: 208 mm a second
+  (x1.55) on the owner's 65-inch TV; a smaller one is not slower. A screen that reports none (or
+  under 10 cm, an aspect ratio only) moves 0.4 of its height a second; sizes are read again every
+  5 s. Precise is half that start speed (67 mm a second on a desk screen), never accelerated. The
+  owner, 25 Nov 2026: in screen heights the pointer was too fast on a scaled-up screen (the TV at
   200 %, 2.4 times as fast); he also found the start too fast at 1.1 heights a second, then 0.7
   (0.2.1, factor 4.5) and 0.55, and settled on 0.4 with a factor of 3.5 over a slower ramp, and
-  precise at half (it was a quarter).
+  precise at half (it was a quarter). 26 Nov 2026: the same mm a second as the desk was too slow
+  on the TV; he chose the automatic square root over a speed set per screen.
 - Volume in apps that get the mouse only: in a game a held bumper is play, never the volume.
 - Settings files from before 20 Nov 2026 (version 1) have every binding still equal to the old
   defaults moved to these; bindings the owner changed are kept (`Migrations` in `Settings.cs`).

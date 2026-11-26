@@ -23,7 +23,7 @@ sealed partial class SettingsForm
             {
                 new FeelField(
                     "Pointer speed",
-                    "How fast the pointer moves at full tilt, as a factor of 13.4 cm a second, the same on every screen.",
+                    "How fast the pointer moves at full tilt, as a factor of 13.4 cm a second on a desk screen, faster on a bigger one watched from farther (1.55 times on a 65-inch TV).",
                     "x",
                     0.05m,
                     10,
